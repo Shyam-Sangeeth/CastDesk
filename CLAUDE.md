@@ -158,7 +158,8 @@ playing in the tray, other videos pause and reopen the window; previews stop whi
 status, on by default), v2.1.5 (PR #2 from Niranjen99: lock screen thumbnail, on by default with two looks, and the
 phone-disconnect setting; the DIAL server refuses web pages; WebView2 closed after 5 minutes in the tray; crash and
 log fixes from a full review), v2.1.6 (Spotlight's "Learn more about this picture" links hidden over the lock screen
-thumbnail; README pictures of both looks). The updater
+thumbnail; README pictures of both looks), v2.1.7 (phones that join over the lounge show CastDesk's name, not
+"Sabrina"). The updater
 worked end to end on the user's PC for 2.1.0 → 2.1.1 (2026-11-07): download and SHA-256 check, `msiexec /passive`,
 CastDesk back up 7 s later.
 
