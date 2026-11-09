@@ -21,6 +21,8 @@ internal sealed class TvAppView : UserControl
     private CoreWebView2Environment? _environment;
     private Task? _initialization;
     private string _screenInfoUrl = "";
+    private string _screenName = CastDeskOptions.DefaultFriendlyName;
+    private string? _screenNameScriptId;
 
     public TvAppView()
     {
@@ -55,6 +57,41 @@ internal sealed class TvAppView : UserControl
     public event EventHandler? ExitRequested;
 
     public bool IsReady => _webView.CoreWebView2 != null;
+
+    /// <summary>
+    /// The name phones show for the TV app once they are connected through YouTube's own connection (the TV app
+    /// otherwise calls itself "YouTube on TV" with the TV identity's model, "Sabrina"). Set it before the browser
+    /// starts; a later change applies the next time the TV app opens.
+    /// </summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public string ScreenName
+    {
+        get => _screenName;
+        set
+        {
+            if (value == _screenName) return;
+            _screenName = value;
+            if (IsReady && _initialization is { IsCompleted: true }) _ = ReplaceScreenNameScriptAsync();
+        }
+    }
+
+    private async Task ReplaceScreenNameScriptAsync()
+    {
+        try
+        {
+            var core = _webView.CoreWebView2;
+            if (_screenNameScriptId != null) core.RemoveScriptToExecuteOnDocumentCreated(_screenNameScriptId);
+            _screenNameScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(ScreenNameScript(_screenName));
+        }
+        catch (Exception exception)
+        {
+            AppLog.Write("tv", $"Could not change the name phones see: {exception.Message}");
+        }
+    }
+
+    /// <summary>Read by page-bridge.js when the TV app connects to YouTube's lounge.</summary>
+    private static string ScreenNameScript(string name) =>
+        $"window.__castDeskScreenName = {System.Text.Json.JsonSerializer.Serialize(name)};";
 
     /// <summary>
     /// Creates the browser (once); it stays empty until a launch or <see cref="ShowHomeIfEmptyAsync"/>.
@@ -111,6 +148,7 @@ internal sealed class TvAppView : UserControl
         {
             if (!e.IsSuccess) AppLog.Write("tv", $"Navigation failed: {e.WebErrorStatus}");
         };
+        _screenNameScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(ScreenNameScript(_screenName));
         await core.AddScriptToExecuteOnDocumentCreatedAsync(LoadMediaSessionBridge());
         core.WebMessageReceived += OnWebMessageReceived;
         core.ContainsFullScreenElementChanged += (_, _) => PageFullscreenChanged?.Invoke(this, core.ContainsFullScreenElement);

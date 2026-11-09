@@ -5,6 +5,7 @@
 //     TV app keeps playing (home-screen previews still stop);
 //   - answers the TV app's format questions as a TV would, so it offers qualities above 720p;
 //   - reports how many phones are connected to the TV app (their disconnect never reaches CastDesk over DIAL);
+//   - gives the TV app CastDesk's name on YouTube's connection, instead of "YouTube on TV" / "Sabrina";
 //   - catches F11 and Alt+Enter (WebView2 keeps keys to itself, so CastDesk's window never sees them);
 //   - shows Back (top-left) and Fullscreen (top-right) buttons while the mouse moves.
 //
@@ -209,9 +210,33 @@
   const xhrOpen = XMLHttpRequest.prototype.open;
   const xhrSend = XMLHttpRequest.prototype.send;
   const loungeRequests = new WeakSet();
+  // The TV app joins the lounge as "YouTube on TV" with deviceInfo from the TV identity (model "Sabrina"), and
+  // phones that connect that way (a second phone, or Link with TV code) show that instead of CastDesk's name.
+  // Recorded 2026-11-10: /api/lounge/bc/bind?device=LOUNGE_SCREEN&name=YouTube%20on%20TV&deviceInfo={"brand":
+  // "google","model":"Sabrina",…}. Only the name and model are changed; the rest stays as the TV app sent it.
+  const withCastDeskName = (url) => {
+    const name = window.__castDeskScreenName;
+    if (typeof name !== 'string' || !name || !String(url).includes('/api/lounge/')) return url;
+    try {
+      const parsed = new URL(String(url), location.href);
+      const params = parsed.searchParams;
+      if (params.has('name')) params.set('name', name);
+      if (params.has('screen_name')) params.set('screen_name', name);
+      if (params.has('deviceInfo')) {
+        const info = JSON.parse(params.get('deviceInfo'));
+        if (info && typeof info === 'object') {
+          info.model = name;
+          params.set('deviceInfo', JSON.stringify(info));
+        }
+      }
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  };
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
     if (String(url).includes('/api/lounge/bc/bind')) loungeRequests.add(this);
-    return xhrOpen.call(this, method, url, ...rest);
+    return xhrOpen.call(this, method, withCastDeskName(url), ...rest);
   };
   XMLHttpRequest.prototype.send = function (...args) {
     if (loungeRequests.has(this)) {

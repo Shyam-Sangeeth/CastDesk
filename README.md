@@ -44,8 +44,8 @@ the phone connection are all YouTube's, as on a TV.
 ## Features
 
 - **Shows up in the phone's Cast menu** as **CastDesk-*PC name*** (for example CastDesk-ARCANE), on every network
-  adapter. The phone's controls work as with a TV: play, pause, seek, next, the queue, and picking another
-  video.
+  adapter. Phones keep showing that name once connected, including a second phone that joins. The phone's
+  controls work as with a TV: play, pause, seek, next, the queue, and picking another video.
 - **Starts in the tray** and comes to the front when you cast; hides again a few seconds after you stop.
 - **Up to 4K** (2160p, up to 60 fps), and **HDR** when HDR is on in Windows' display settings. Pick the quality in
   the TV app's player settings; Auto may choose 4K even on a smaller screen.
@@ -129,7 +129,7 @@ front and YouTube's TV app opens the video. Control it from the phone as you wou
 the window hides to the tray after 3 seconds (you can turn that off).
 
 Another way to connect, without the Cast menu: in the TV app open **Settings → Link with TV code**, and on the phone
-go to **YouTube settings → Watch on TV → Enter TV code**. The phone then lists the PC under the name YouTube gives it.
+go to **YouTube settings → Watch on TV → Enter TV code**. The phone then lists the PC under its CastDesk name too.
 
 ### Signing in
 
@@ -193,7 +193,7 @@ CastDesk. The general settings and updates are on the left, the advanced ones on
 
 | Setting | Default | What it does |
 |---|---|---|
-| Name in your phone's Cast menu | CastDesk-*PC name* | What phones list. They may show the old name for a few minutes after a change. |
+| Name in your phone's Cast menu | CastDesk-*PC name* | What phones list, in the Cast menu and once connected. They may show the old name for a few minutes after a change; once connected, the new name is used the next time the player opens. |
 | Go fullscreen when a cast starts | Off | Switches the window to fullscreen whenever a phone casts. |
 | Hide the window when casting stops | On | Hides the window to the tray 3 seconds after the phone stops casting. |
 | Keep playing when my phone disconnects | On | **Disconnect from TV** on the phone leaves the video playing, and your phone is free again. Turn this off to stop the player 5 seconds after the last connected phone disconnects; it then goes back to the home screen, or hides if the setting above is on. This works best with YouTube Music: in the YouTube app, tapping a new video while casting plays it on the phone and disconnects it, so the cast stops too. To keep the cast going there, use **Play next** or **Add to queue**. |
@@ -255,7 +255,10 @@ In the registry:
    the details at `GET /apps/YouTube`, where the phone reads them. From then on the phone and the TV app talk through
    YouTube directly, as with a real TV.
 4. **The TV identity.** youtube.com/tv only serves its TV app to TV browsers, so CastDesk's WebView2 presents a
-   Chromecast with Google TV's user agent. That's why linked-TV lists may show it as a Google device.
+   Chromecast with Google TV's user agent. On its own, the TV app would then tell YouTube it is "YouTube on TV", model
+   "Sabrina" (that Chromecast's codename), and phones that join through YouTube's servers would show that name. The
+   script described below swaps CastDesk's name into those requests (`name` and `deviceInfo.model` on
+   `/api/lounge/bc/bind`). Linked-TV lists may still show it as a Google device.
 5. **Windows labels.** The TV app's sound is played by WebView2's own processes, so Windows would call it "Microsoft
    Edge WebView2" in the volume mixer and "Unknown app" in the media controls. CastDesk renames its WebView2 audio
    sessions to "CastDesk" (Core Audio API), turns WebView2's media controls off, and registers its own on its window,
@@ -320,6 +323,8 @@ In the registry:
   please [open an issue](https://github.com/Shyam-Sangeeth/CastDesk/issues) with that line.
 - **The first cast after a while takes a moment longer:** after 5 minutes in the tray with nothing playing, CastDesk
   closes its browser to free memory, and a cast starts it again. That's normal.
+- **A phone shows "Sabrina" or "YouTube on TV" instead of CastDesk's name:** that's the TV app's name from before
+  CastDesk 2.1.7. Update CastDesk, then disconnect the phone and cast again.
 - **CastDesk appears twice:** the phone still remembers an older entry. It disappears within about 30 minutes, or
   sooner if you turn the phone's Wi-Fi off and on.
 - **YouTube says this browser isn't supported, or the TV app looks wrong:** YouTube may have stopped accepting the TV
@@ -419,7 +424,8 @@ Dial/
 Tv/
   TvAppView.cs         YouTube's TV app in WebView2, with the TV identity
   page-bridge.js       Injected into the TV app: media state, fullscreen keys, Back and Fullscreen buttons,
-                       videos playing while minimized, format answers (qualities above 720p), connected phones
+                       videos playing while minimized, format answers (qualities above 720p), connected phones,
+                       CastDesk's name on YouTube's connection
   MediaState.cs        What the TV app is playing
 Media/
   WindowsMediaControls.cs  CastDesk's entry in Windows' media controls

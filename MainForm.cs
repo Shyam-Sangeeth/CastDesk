@@ -72,7 +72,7 @@ public sealed class MainForm : Form
         _options = options;
         _controller = new CastDeskController(options);
 
-        _tvApp = new TvAppView { Dock = DockStyle.Fill };
+        _tvApp = new TvAppView { Dock = DockStyle.Fill, ScreenName = options.FriendlyName };
         _discord = new DiscordPresence(() => _tvApp.BrowserProcessId) { Enabled = options.ShowInDiscord };
         _lockScreen = new LockScreenArtwork(options.ShowOnLockScreen, options.LockScreenFillsScreen);
         _tvApp.ScreenInfoReported += (_, details) => _controller.ReportScreenInfo(details);
@@ -515,6 +515,7 @@ public sealed class MainForm : Form
             _discord.Enabled = updated.ShowInDiscord;
             _lockScreen.Enabled = updated.ShowOnLockScreen;
             _lockScreen.FillScreen = updated.LockScreenFillsScreen;
+            _tvApp.ScreenName = updated.FriendlyName;
             if (userAgentChanged) _tvApp.ChangeUserAgent(updated.EffectiveUserAgent);
 
             if (problems.Count > 0)

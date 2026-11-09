@@ -51,6 +51,9 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
   It also counts connected phones, for `KeepPlayingWhenPhoneDisconnects` (on by default): "Disconnect from TV" sends
   no DIAL `DELETE`, and the phone keeps polling `GET /apps/YouTube`, so the signal is the lounge's `loungeStatus`
   message on `/api/lounge/bc/bind` (its `devices` JSON has one `REMOTE_CONTROL` per phone; recorded 2026-11-09).
+  It also puts the Cast menu name into the TV app's lounge requests (`name`, `screen_name`, `deviceInfo.model`;
+  `TvAppView.ScreenName` sets `window.__castDeskScreenName` in a separate document script): otherwise phones that
+  join over the lounge (a second phone, Link with TV code) show "YouTube on TV" / "Sabrina", the TV identity's model.
 - `MainForm.cs`: window, tray menu, fullscreen. The close button (`CloseToTray`) keeps the TV app loaded on a video
   page: music keeps playing, other videos are paused, and the window comes back when a non-music video plays again.
   Elsewhere it unloads the TV app (`HideToTray`, also used when casting stops) so nothing plays hidden. After 5
