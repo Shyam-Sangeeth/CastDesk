@@ -55,10 +55,17 @@ public sealed class CastDeskOptions
     public bool ShowInDiscord { get; set; } = true;
 
     /// <summary>
-    /// While a video plays, make its thumbnail the lock screen picture. Off by default: it changes a Windows
-    /// setting for a while and shows what's playing to anyone who can see the locked screen.
+    /// While a video plays, make its thumbnail the lock screen picture. On by default (the user chose this for
+    /// 2.1.5); the user's own lock screen is put back afterwards. It shows what's playing to anyone who can see the
+    /// locked screen, so Settings and the README say so.
     /// </summary>
-    public bool ShowOnLockScreen { get; set; }
+    public bool ShowOnLockScreen { get; set; } = true;
+
+    /// <summary>
+    /// The lock screen picture's look: false (the default, the user's choice) puts the thumbnail in the centre at
+    /// half the screen's width on tinted glass; true fills the screen with it (Niranjen99's original design).
+    /// </summary>
+    public bool LockScreenFillsScreen { get; set; }
 
     /// <summary>
     /// A Chromecast with Google TV running YouTube's TV engine (Cobalt). youtube.com/tv only serves its TV

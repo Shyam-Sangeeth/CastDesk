@@ -13,10 +13,11 @@ internal static class AppLog
 
     private static readonly object WriterLock = new();
     private static StreamWriter? _writer;
+    private static long _written; // bytes in the current log, so a copy running for weeks still starts a new one
 
     public static string FilePath { get; } = Path.Combine(CastDeskOptions.DataDirectory, "castdesk.log");
 
-    /// <param name="source">Who wrote the line, such as "host" or "bridge".</param>
+    /// <param name="source">Who wrote the line, such as "host", "dial", "tv", "lock" or "discord".</param>
     public static void Write(string source, string message)
     {
         var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{source}] {message}";
@@ -25,8 +26,14 @@ internal static class AppLog
         {
             try
             {
+                if (_writer != null && _written > MaxLogBytes)
+                {
+                    _writer.Dispose();
+                    _writer = null;
+                }
                 _writer ??= OpenWriter();
                 _writer.WriteLine(line);
+                _written += Encoding.UTF8.GetByteCount(line) + 2;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -41,9 +48,21 @@ internal static class AppLog
 
         // Once the log passes 1 MB, start a new one and keep the previous one as castdesk.log.old.
         var existingLog = new FileInfo(FilePath);
+        // This also runs while CastDesk is running, as soon as the log passes 1 MB (see Write).
         if (existingLog.Exists && existingLog.Length > MaxLogBytes)
-            File.Move(FilePath, FilePath + ".old", overwrite: true);
+        {
+            try
+            {
+                File.Move(FilePath, FilePath + ".old", overwrite: true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // castdesk.log.old is open somewhere: keep writing to this log rather than lose lines.
+            }
+        }
 
-        return new StreamWriter(FilePath, append: true, new UTF8Encoding(false)) { AutoFlush = true };
+        var writer = new StreamWriter(FilePath, append: true, new UTF8Encoding(false)) { AutoFlush = true };
+        _written = writer.BaseStream.Length;
+        return writer;
     }
 }

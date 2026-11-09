@@ -140,14 +140,48 @@ internal sealed partial class DialHttpServer : IDisposable
             // Answer with the address the phone reached us on, so the URLs work on its network.
             var localAddress = ((IPEndPoint)client.Client.LocalEndPoint!).Address.MapToIPv4();
             var baseUrl = $"http://{localAddress}:{Port}";
-            var response = Route(request, baseUrl);
-            AppLog.Write("dial", $"{request.Method} {request.Path} from {((IPEndPoint)client.Client.RemoteEndPoint!).Address} -> {response.StatusCode}");
+            var refusal = RefusalReason(request);
+            var response = refusal == null ? Route(request, baseUrl) : HttpResponse.Empty(403);
+            var origin = request.Origin != null ? $" (Origin {request.Origin})" : "";
+            AppLog.Write("dial", $"{request.Method} {request.Path} from {((IPEndPoint)client.Client.RemoteEndPoint!).Address}{origin} -> {response.StatusCode}" +
+                (refusal != null ? $": {refusal}" : ""));
             await stream.WriteAsync(response.ToBytes(), timeout.Token);
         }
         catch (Exception exception) when (exception is IOException or SocketException or OperationCanceledException)
         {
             // The phone hung up or took too long.
         }
+    }
+
+    /// <summary>
+    /// Why a request must be refused, or null to answer it. Phones' YouTube apps send no Origin (or YouTube's own,
+    /// or an app's "package:" one), and reach CastDesk by IP address. A web page in a browser on this PC or the
+    /// network sends its own Origin, so it can't launch or stop the TV app or read its pairing details. A Host
+    /// that isn't an IP address (or localhost) means DNS rebinding: a site's own name pointed at this PC.
+    /// This is what the DIAL specification asks of servers.
+    /// </summary>
+    internal static string? RefusalReason(HttpRequest request)
+    {
+        if (request.Origin is { } origin && !IsAllowedOrigin(origin)) return "a web page's request";
+        if (request.Host is { } host && !IsAddressHost(host)) return $"unexpected host {host}";
+        return null;
+    }
+
+    private static bool IsAllowedOrigin(string origin)
+    {
+        if (origin.StartsWith("package:", StringComparison.OrdinalIgnoreCase) ||
+            origin.StartsWith("ios-app:", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return false;
+        return uri.Host.Equals("youtube.com", StringComparison.OrdinalIgnoreCase) ||
+            uri.Host.EndsWith(".youtube.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAddressHost(string host)
+    {
+        // "192.168.0.2:8765", "[fe80::1]:8765", "localhost:8765"
+        var name = host.StartsWith('[') ? host[1..Math.Max(1, host.IndexOf(']'))]
+            : host.LastIndexOf(':') is var colon and > 0 ? host[..colon] : host;
+        return IPAddress.TryParse(name, out _) || name.Equals("localhost", StringComparison.OrdinalIgnoreCase);
     }
 
     private HttpResponse Route(HttpRequest request, string baseUrl)

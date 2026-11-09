@@ -190,7 +190,7 @@
   // means one of two phones leaving doesn't look like the last one leaving. Only the device types are read.
   let phonesConnected = 0;
   const readLoungeMessage = (line) => {
-    const match = /^(?:\[|,)(\[\d+,\[.*\])$/.exec(line);
+    const match = /^(?:\[|,)(\[\d+,\[.*\])$/.exec(line.trimEnd()); // in case lines end in \r\n
     if (!match || !match[1].includes('"loungeStatus"')) return;
     // A message that ends its chunk carries the chunk's closing bracket too.
     for (const candidate of [match[1], match[1].slice(0, -1)]) {

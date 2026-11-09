@@ -24,6 +24,7 @@ public sealed class MainForm : Form
     private const int VideoPlayingInTrayMilliseconds = 1500;
     private const int LeftVideoPageMilliseconds = 3000;
     private const int PhoneGoneMilliseconds = 5000; // so a phone that reconnects straight away doesn't stop the video
+    private const int ReleaseBrowserMilliseconds = 5 * 60 * 1000; // hidden this long with nothing loaded: free WebView2
 
     private readonly CastDeskController _controller;
     private readonly TvAppView _tvApp;
@@ -32,6 +33,7 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _hideAfterStopTimer;
     private readonly System.Windows.Forms.Timer _updateCheckTimer;
     private readonly System.Windows.Forms.Timer _phoneGoneTimer;
+    private readonly System.Windows.Forms.Timer _releaseBrowserTimer;
     private readonly AudioSessionRenamer _audioSessionRenamer;
     private readonly DiscordPresence _discord;
     private readonly LockScreenArtwork _lockScreen;
@@ -72,7 +74,7 @@ public sealed class MainForm : Form
 
         _tvApp = new TvAppView { Dock = DockStyle.Fill };
         _discord = new DiscordPresence(() => _tvApp.BrowserProcessId) { Enabled = options.ShowInDiscord };
-        _lockScreen = new LockScreenArtwork(options.ShowOnLockScreen);
+        _lockScreen = new LockScreenArtwork(options.ShowOnLockScreen, options.LockScreenFillsScreen);
         _tvApp.ScreenInfoReported += (_, details) => _controller.ReportScreenInfo(details);
         _tvApp.ExitRequested += (_, _) =>
         {
@@ -161,6 +163,14 @@ public sealed class MainForm : Form
             StopCasting();
         };
 
+        // Hidden in the tray with the TV app unloaded (not playing music there): after a while, close the browser.
+        _releaseBrowserTimer = new System.Windows.Forms.Timer { Interval = ReleaseBrowserMilliseconds };
+        _releaseBrowserTimer.Tick += (_, _) =>
+        {
+            _releaseBrowserTimer.Stop();
+            if (!Visible && !_inTrayWithVideo) _tvApp.ReleaseBrowser();
+        };
+
         _controller.StopRequested += (_, _) => StopCasting();
         _controller.ReceiverStatusChanged += (_, status) => SetReceiverStatus(status);
 
@@ -181,9 +191,10 @@ public sealed class MainForm : Form
     /// <summary>A phone asked to stop, or the last one left: back to the home screen, then hide if the settings say so.</summary>
     private void StopCasting()
     {
-        if (_inTrayWithVideo)
+        if (_inTrayWithVideo || !Visible)
         {
-            // Unload rather than open the home screen, whose previews would play in the tray.
+            // Unload rather than open the home screen, whose previews would play in the tray. When the window is
+            // already hidden (and the TV app unloaded), this also keeps GoHome from loading it in the background.
             HideToTray();
             return;
         }
@@ -206,8 +217,9 @@ public sealed class MainForm : Form
             _trayIcon.ShowBalloonTip(15000, $"CastDesk {update.Version} is available",
                 "Click to open Settings and update.", ToolTipIcon.Info);
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception exception)
         {
+            // Called from a timer (async void): any failure must only be logged, never crash CastDesk.
             AppLog.Write("update", $"Automatic update check failed: {exception.Message}");
         }
     }
@@ -237,7 +249,17 @@ public sealed class MainForm : Form
         {
             _mediaControls = new WindowsMediaControls(Handle);
             // Media buttons arrive on a background thread; WebView2 must be called on the UI thread.
-            _mediaControls.CommandRequested += (_, command) => BeginInvoke(() => _tvApp.SendMediaCommand(command));
+            _mediaControls.CommandRequested += (_, command) =>
+            {
+                try
+                {
+                    if (!IsDisposed) BeginInvoke(() => _tvApp.SendMediaCommand(command));
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+                {
+                    // A media key pressed as CastDesk closes.
+                }
+            };
         }
         catch (Exception exception)
         {
@@ -281,6 +303,7 @@ public sealed class MainForm : Form
     private void ShowWindow()
     {
         _hideAfterStopTimer.Stop();
+        _releaseBrowserTimer.Stop();
         LeaveTrayWithVideo();
         _allowVisible = true;
         if (!Visible) Show();
@@ -306,9 +329,12 @@ public sealed class MainForm : Form
     private void HideToTray()
     {
         _hideAfterStopTimer.Stop();
+        _phoneGoneTimer.Stop(); // the TV app is unloaded; a phone that left no longer matters
         LeaveTrayWithVideo();
         Hide();
         _tvApp.Unload();
+        _releaseBrowserTimer.Stop();
+        _releaseBrowserTimer.Start(); // restarts the 5 minutes
         _mediaControls?.Show(MediaState.Nothing);
         _discord.Show(MediaState.Nothing);
         _lockScreen.Show(MediaState.Nothing);
@@ -488,6 +514,7 @@ public sealed class MainForm : Form
             _controller.ApplyOptions(updated);
             _discord.Enabled = updated.ShowInDiscord;
             _lockScreen.Enabled = updated.ShowOnLockScreen;
+            _lockScreen.FillScreen = updated.LockScreenFillsScreen;
             if (userAgentChanged) _tvApp.ChangeUserAgent(updated.EffectiveUserAgent);
 
             if (problems.Count > 0)
@@ -503,6 +530,14 @@ public sealed class MainForm : Form
     public void ExitApplication()
     {
         _isExiting = true;
+        // An open Settings window runs its own message loop, which would keep CastDesk (and --exit) waiting.
+        // Close it, and finish exiting once its loop has ended and OpenSettings has returned.
+        if (_settingsForm is { IsDisposed: false, Visible: true } settings)
+        {
+            settings.Close();
+            BeginInvoke(ExitApplication);
+            return;
+        }
         Close();
     }
 
@@ -532,6 +567,7 @@ public sealed class MainForm : Form
             _hideAfterStopTimer.Dispose();
             _updateCheckTimer.Dispose();
             _phoneGoneTimer.Dispose();
+            _releaseBrowserTimer.Dispose();
             _pauseTimeoutTimer.Dispose();
             _videoPlayingInTrayTimer.Dispose();
             _leftVideoPageTimer.Dispose();

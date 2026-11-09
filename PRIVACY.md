@@ -26,7 +26,7 @@ To remove all of it, uninstall CastDesk and delete that folder.
   DIAL). These stay on your network.
 - **YouTube.** CastDesk shows YouTube's own TV app (youtube.com/tv). What you watch, your sign-in and your casting
   session are handled by YouTube, under [Google's Privacy Policy](https://policies.google.com/privacy). With
-  **Show the thumbnail on the lock screen** on (it is off by default), CastDesk also downloads each video's thumbnail
+  **Show the thumbnail on the lock screen** on (it is on by default), CastDesk also downloads each video's thumbnail
   from YouTube's image server (`i.ytimg.com`) or the address the TV app gives for it.
 - **GitHub, to check for updates.** Shortly after it starts (unless you turn this off in Settings), and when you click
   **Check for updates**, CastDesk asks `api.github.com` for the latest release, and downloads the installer from

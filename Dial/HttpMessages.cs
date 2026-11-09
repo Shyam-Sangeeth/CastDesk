@@ -6,18 +6,26 @@ namespace CastDesk.Dial;
 /// <summary>One HTTP/1.1 request, as much of it as the DIAL server needs.</summary>
 internal sealed class HttpRequest
 {
-    private HttpRequest(string method, string path, string query, string body)
+    private HttpRequest(string method, string path, string query, string body, string? host, string? origin)
     {
         Method = method;
         Path = path;
         Query = query;
         Body = body;
+        Host = host;
+        Origin = origin;
     }
 
     public string Method { get; }
     public string Path { get; }
     public string Query { get; }
     public string Body { get; }
+
+    /// <summary>The Host header, or null if there was none.</summary>
+    public string? Host { get; }
+
+    /// <summary>The Origin header (browsers send it with requests from web pages), or null if there was none.</summary>
+    public string? Origin { get; }
 
     /// <summary>Reads one request (headers, then a body of Content-Length bytes). Null if the stream ends first.</summary>
     public static async Task<HttpRequest?> ReadAsync(Stream stream, int maxHeaderBytes, int maxBodyBytes, CancellationToken cancellationToken)
@@ -40,11 +48,16 @@ internal sealed class HttpRequest
         if (requestLine.Length < 2) return null;
 
         var contentLength = 0;
+        string? host = null, origin = null;
         foreach (var line in lines.Skip(1))
         {
             var colon = line.IndexOf(':');
-            if (colon > 0 && line[..colon].Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                int.TryParse(line[(colon + 1)..].Trim(), out contentLength);
+            if (colon <= 0) continue;
+            var name = line[..colon].Trim();
+            var value = line[(colon + 1)..].Trim();
+            if (name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase)) int.TryParse(value, out contentLength);
+            else if (name.Equals("Host", StringComparison.OrdinalIgnoreCase)) host = value;
+            else if (name.Equals("Origin", StringComparison.OrdinalIgnoreCase)) origin = value;
         }
         if (contentLength < 0 || contentLength > maxBodyBytes) return null;
 
@@ -62,7 +75,7 @@ internal sealed class HttpRequest
         var path = questionMark >= 0 ? target[..questionMark] : target;
         var query = questionMark >= 0 ? target[(questionMark + 1)..] : "";
         var bodyText = Encoding.UTF8.GetString(body.ToArray(), 0, (int)Math.Min(body.Length, contentLength));
-        return new HttpRequest(requestLine[0].ToUpperInvariant(), path, query, bodyText);
+        return new HttpRequest(requestLine[0].ToUpperInvariant(), path, query, bodyText, host, origin);
     }
 
     /// <summary>Parses "a=1&amp;b=2" (URL-encoded form or query string). Later keys win.</summary>
@@ -117,9 +130,6 @@ internal sealed class HttpResponse
         head.Append($"HTTP/1.1 {StatusCode} {ReasonPhrase(StatusCode)}\r\n");
         head.Append($"Content-Type: {_contentType}\r\n");
         head.Append($"Content-Length: {_body.Length}\r\n");
-        head.Append("Access-Control-Allow-Origin: *\r\n");
-        head.Append("Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n");
-        head.Append("Access-Control-Allow-Headers: Content-Type, Origin\r\n");
         head.Append("Connection: close\r\n");
         foreach (var (name, value) in _headers) head.Append($"{name}: {value}\r\n");
         head.Append("\r\n");

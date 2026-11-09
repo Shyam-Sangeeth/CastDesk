@@ -66,7 +66,17 @@ internal static class Program
         var exitWait = ThreadPool.RegisterWaitForSingleObject(exitEvent, (_, _) =>
         {
             AppLog.Write("host", "Asked to exit (--exit).");
-            mainForm.BeginInvoke(mainForm.ExitApplication);
+            // On a pool thread: an exception here would crash CastDesk instead of closing it.
+            try
+            {
+                // Still starting: wait for the window, which has the message loop to exit through.
+                for (var waited = 0; !mainForm.IsHandleCreated && waited < 100; waited++) Thread.Sleep(100);
+                mainForm.BeginInvoke(mainForm.ExitApplication);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or ObjectDisposedException)
+            {
+                // Already closing.
+            }
         }, null, Timeout.Infinite, executeOnlyOnce: true);
         Application.Run(mainForm);
         exitWait.Unregister(null);

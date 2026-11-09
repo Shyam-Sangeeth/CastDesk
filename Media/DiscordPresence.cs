@@ -253,6 +253,11 @@ internal sealed partial class DiscordPresence : IDisposable
             {
                 await pipe.DisposeAsync();
             }
+            catch (OperationCanceledException)
+            {
+                await pipe.DisposeAsync(); // CastDesk is closing
+                throw;
+            }
         }
 
         if (!_reportedUnavailable) AppLog.Write("discord", "Discord isn't running; trying again every 30 seconds.");

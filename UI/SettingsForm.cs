@@ -30,6 +30,7 @@ internal sealed class SettingsForm : Form
     private readonly CheckBox _autoCheckUpdatesBox = new() { Text = "Check for updates automatically", AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
     private readonly CheckBox _showInDiscordBox = new() { Text = "Show what I'm playing in Discord", AutoSize = true };
     private readonly CheckBox _showOnLockScreenBox = new() { Text = "Show the thumbnail on the lock screen", AutoSize = true };
+    private readonly ComboBox _lockScreenLookBox = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220, Margin = new Padding(6, 0, 0, 0) };
 
     private readonly CastDeskOptions _original;
     private CancellationTokenSource? _downloadCancel;
@@ -96,8 +97,14 @@ internal sealed class SettingsForm : Form
 
         right.Controls.Add(Heading("Lock screen"));
         right.Controls.Add(_showOnLockScreenBox);
-        right.Controls.Add(Hint("While a video or song plays, its thumbnail is your lock screen picture, if YouTube has a " +
-            "sharp one. Your own lock screen comes back when playback stops."));
+        // Index 0 = centred (LockScreenFillsScreen false), 1 = fill the screen.
+        _lockScreenLookBox.Items.AddRange(["Centred, on tinted glass", "Fill the screen"]);
+        var lookRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 4, 0, 0) };
+        lookRow.Controls.Add(new Label { Text = "Look", AutoSize = true, Margin = new Padding(0, 4, 0, 0) });
+        lookRow.Controls.Add(_lockScreenLookBox);
+        right.Controls.Add(lookRow);
+        _showOnLockScreenBox.CheckedChanged += (_, _) => _lockScreenLookBox.Enabled = _showOnLockScreenBox.Checked;
+        right.Controls.Add(Hint("While something plays. Your own lock screen comes back when it stops."));
 
         right.Controls.Add(Heading("Advanced"));
         right.Controls.Add(Label("Port phones connect to"));
@@ -130,6 +137,8 @@ internal sealed class SettingsForm : Form
         _autoCheckUpdatesBox.Checked = current.CheckForUpdates;
         _showInDiscordBox.Checked = current.ShowInDiscord;
         _showOnLockScreenBox.Checked = current.ShowOnLockScreen;
+        _lockScreenLookBox.SelectedIndex = current.LockScreenFillsScreen ? 1 : 0;
+        _lockScreenLookBox.Enabled = current.ShowOnLockScreen;
         ShowUpdateState(FoundUpdate == null
             ? $"You have CastDesk {UpdateService.CurrentVersion}."
             : $"CastDesk {FoundUpdate.Version} is available (you have {UpdateService.CurrentVersion}).");
@@ -165,7 +174,7 @@ internal sealed class SettingsForm : Form
                 ? $"You're up to date (CastDesk {UpdateService.CurrentVersion})."
                 : $"CastDesk {FoundUpdate.Version} is available (you have {UpdateService.CurrentVersion}).");
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception exception) // show any failure here rather than leave the window saying "Checking"
         {
             AppLog.Write("update", $"Update check failed: {exception.Message}");
             ShowUpdateState($"Couldn't check for updates: {exception.Message}");
@@ -200,7 +209,7 @@ internal sealed class SettingsForm : Form
         {
             // The window was closed during the download.
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException or TaskCanceledException or System.ComponentModel.Win32Exception)
+        catch (Exception exception) // a timeout, no access to Temp, a failed check: shown here, not left unexplained
         {
             AppLog.Write("update", $"Update failed: {exception.Message}");
             ShowUpdateState($"Update failed: {exception.Message}");
@@ -288,6 +297,7 @@ internal sealed class SettingsForm : Form
         result.CheckForUpdates = _autoCheckUpdatesBox.Checked;
         result.ShowInDiscord = _showInDiscordBox.Checked;
         result.ShowOnLockScreen = _showOnLockScreenBox.Checked;
+        result.LockScreenFillsScreen = _lockScreenLookBox.SelectedIndex == 1;
         result.DialPort = (int)_portBox.Value;
         // Store an empty value for the default, so a future CastDesk with a newer default picks it up.
         var userAgent = _userAgentBox.Text.Trim();

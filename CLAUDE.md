@@ -53,7 +53,9 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
   message on `/api/lounge/bc/bind` (its `devices` JSON has one `REMOTE_CONTROL` per phone; recorded 2026-11-09).
 - `MainForm.cs`: window, tray menu, fullscreen. The close button (`CloseToTray`) keeps the TV app loaded on a video
   page: music keeps playing, other videos are paused, and the window comes back when a non-music video plays again.
-  Elsewhere it unloads the TV app (`HideToTray`, also used when casting stops) so nothing plays hidden.
+  Elsewhere it unloads the TV app (`HideToTray`, also used when casting stops) so nothing plays hidden. After 5
+  minutes unloaded in the tray, `TvAppView.ReleaseBrowser` disposes the WebView2 control (and its processes) and puts
+  a new one in its place; the next cast initializes it again. The user chose this to save memory.
 - `Media/WindowsMediaControls.cs`, `Interop/` (`AudioSessionRenamer`, `AppIdentity`, `ProcessTree`, `WindowTheme`):
   make Windows call the sound and media controls "CastDesk" instead of WebView2 / Unknown app. The media controls
   only resolve the name through the installer's Start menu shortcut with `System.AppUserModel.ID` =
@@ -68,19 +70,32 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
   process's window: send the WebView2 browser process (`TvAppView.BrowserProcessId`, windowless), never CastDesk's
   own ID (with it, the overlay appeared over the player; confirmed gone on the user's PC on 2026-11-08).
   Testing it changes the user's real Discord status: keep tests short and clear it afterwards.
-- `Media/LockScreenArtwork.cs`: the thumbnail as the lock screen picture while playing (`ShowOnLockScreen`, off by
-  default). Set as playback starts, not on lock: `LockScreen.SetImageFileAsync` takes ~0.8 s, so setting it on lock
-  showed Spotlight first. It needs no admin rights and turns off Spotlight (`RotatingLockScreenEnabled`), so
+- `Media/LockScreenArtwork.cs`: the thumbnail as the lock screen picture while playing (`ShowOnLockScreen`, on by
+  default since 2.1.5, the user's choice). Two looks (`LockScreenFillsScreen`, Settings → Look; a change redraws the
+  picture at once). The default, `ComposePicture`, puts the art in the centre at half the screen's width (60% of its
+  height at most) on frosted, glossy glass tinted with the art's main colour (`MainColor`); the user asked for this
+  over a blur of the art. `ComposeFilledPicture` is Niranjen99's original (fills the screen, or the art over a blur of
+  itself), kept as an option at the user's request. The glass is computed per pixel because GDI+ gradient brushes
+  left rings; its terms are precomputed per row and column (glows are separable Gaussians, the gloss is a lookup
+  table, the grain is xorshift) and the shadow fills only the ring outside the art. That took it from 1,056 ms to
+  87 ms at 1080p and 5,249 ms to 393 ms at 4K: keep per-pixel work out of the inner loop.
+  `FindPictureArea` crops black bars, and flat bars of any colour when they come in a matching pair and leave a
+  square (album tracks' `maxresdefault.jpg` puts the cover between dark gray bars; requiring a square keeps a plain
+  backdrop around a centred subject). Art under 600 px on its shorter side is skipped when filling the screen (the
+  user's request), under 340 px when centred, which also tries `sddefault` and `hqdefault` so old videos show.
+  To check the look without touching the lock screen, call `ComposePicture` / `ComposeFilledPicture` by reflection
+  from a throwaway console program on downloaded thumbnails.
+  Set as playback starts, not on lock: `LockScreen.SetImageFileAsync` takes ~0.8 s, so setting it on lock showed
+  Spotlight first. It needs no admin rights and turns off Spotlight (`RotatingLockScreenEnabled`), so
   `LockScreen\backup.json` saves the picture and the switches first; restored 5 s after playback stops, or at the next
   start after a crash. Windows reads the Spotlight switch only as the lock screen starts: stopped while locked, the
-  underlying picture shows until the next lock (the user chose that over keeping the stopped song's thumbnail). Art
-  under 600 px on its shorter side is skipped at the user's request. Tested on the user's PC 2026-11-09 for Spotlight
-  and Picture; restoring a slideshow is untested. To test silently, compile this file into a throwaway console
-  program and pass it fake `MediaState`s (`AppLog` can't write while the installed copy holds the log). Testing changes
+  underlying picture shows until the next lock (the user chose that over keeping the stopped song's thumbnail).
+  Tested on the user's PC 2026-11-09 for Spotlight and Picture; restoring a slideshow is untested. Testing changes
   the user's real lock screen: back up the registry keys and leave Spotlight as it was.
 - `Configuration/` (`CastDeskOptions` = `%LOCALAPPDATA%\CastDesk\settings.json`, `DeviceIdentity`,
   `StartupRegistration`), `UI/SettingsForm.cs` (two columns, so it fits 1080p at 150%; keep it from growing taller),
-  `Diagnostics/AppLog.cs`.
+  `Diagnostics/AppLog.cs` (starts a new log past 1 MB as it writes, not only at start: phones poll while connected,
+  and CastDesk runs for weeks).
 - `Updates/UpdateService.cs`: GitHub latest-release check, MSI download verified by size and the asset's SHA-256
   digest, `msiexec /passive`. Used by Settings → Updates and the automatic check 30 s after start (tray balloon).
 - `installer/`: WiX 5 MSI (`Package.wxs`, `build-installer.ps1`, `make-installer-art.ps1`); `payload/` and `out/` are
@@ -95,6 +110,14 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
 - **YouTube only.** No stream extraction (v1 used YoutubeExplode + LibVLC and hit YouTube's bot check). Netflix can't
   be cast to uncertified devices; Miracast receive needs a UWP `CoreApplicationView` (`StartAsync` gives E_INVALIDARG
   from Win32); AirPlay and Google Cast mirroring would need reverse-engineering. Don't re-propose these.
+- **The DIAL server refuses web pages** (`DialHttpServer.RefusalReason`): an `Origin` that isn't YouTube's (or an
+  app's `package:` / `ios-app:`) gets 403, as does a `Host` that isn't an IP address or localhost (DNS rebinding).
+  There are no CORS headers. The `[dial]` log lines show each request's `Origin`; check a real cast still works after
+  changing this.
+- **Catch everything on timer and pool threads.** An exception there ends CastDesk (WinForms only catches the UI
+  thread). `AudioSessionRenamer` (every 3 s), the SSDP announcements and network-change handler, the `--exit` wait,
+  and the media-key callback all catch `Exception` and log it; `Marshal.ThrowExceptionForHR` and adapter listing
+  throw more types than you'd expect. Background workers (`DiscordPresence`, `LockScreenArtwork`) do the same.
 - **Settings stay loadable:** older `settings.json` files must still load. Add new settings with defaults.
 
 ## Testing on the user's PC
@@ -125,7 +148,9 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
 Releases: v2.0.0 (first, no updater), v2.1.0 (updater), v2.1.1 (shortcut app ID, so the media controls say
 "CastDesk"), v2.1.2 (PR #1 from Niranjen99: keeps playing while minimized, qualities above 720p), v2.1.3 (music keeps
 playing in the tray, other videos pause and reopen the window; previews stop while minimized), v2.1.4 (Discord
-status, on by default). The updater
+status, on by default), v2.1.5 (PR #2 from Niranjen99: lock screen thumbnail, on by default with two looks, and the
+phone-disconnect setting; the DIAL server refuses web pages; WebView2 closed after 5 minutes in the tray; crash and
+log fixes from a full review). The updater
 worked end to end on the user's PC for 2.1.0 → 2.1.1 (2026-11-07): download and SHA-256 check, `msiexec /passive`,
 CastDesk back up 7 s later.
 

@@ -53,16 +53,19 @@ the phone connection are all YouTube's, as on a TV.
 - **Music keeps playing in the tray:** close the window during a song and it keeps playing, with the phone still in
   control. Close it during any other video and the video pauses; play it again from the phone and the window comes
   back.
-- **Nothing else plays in the background:** closing the window on the home screen unloads the TV app.
+- **Nothing else plays in the background:** closing the window on the home screen unloads the TV app, and after
+  5 minutes in the tray CastDesk closes its browser too, freeing its memory. The next cast starts it again.
 - **Fullscreen** with F11, Alt+Enter or a button, and a **Back** button for the TV app.
 - **Named "CastDesk" in Windows:** in the volume mixer and the media controls (with title, play/pause and next/previous),
   instead of "Microsoft Edge WebView2" and "Unknown app". Media keys work.
 - **Signed in once:** your YouTube sign-in is kept in CastDesk's own browser profile.
-- **Settings window** for the name, window behaviour, starting with Windows, the port and the TV identity.
+- **Settings window** for the name, window behaviour, what happens when your phone disconnects, starting with
+  Windows, updates, Discord, the lock screen, the port and the TV identity.
 - **Shows what's playing in Discord** (on by default, turn it off in Settings): "Listening to" for music, "Watching" for other
   videos, with the title, channel, thumbnail, time left and a link to the video.
-- **Thumbnail on the lock screen** (off by default, turn it on in Settings): while something plays, its thumbnail fills
-  the Windows lock screen, with a blurred background if it doesn't fit. Your own lock screen comes back afterwards.
+- **Thumbnail on the lock screen** (on by default, turn it off in Settings): while something plays, its thumbnail sits
+  in the middle of the Windows lock screen, half the screen wide, on frosted, glossy glass tinted with the
+  thumbnail's main colour, or filling the screen if you prefer. Your own lock screen comes back afterwards.
 - **Updates from inside the app:** CastDesk checks GitHub for a new version, and downloads, verifies and installs it.
 
 ## Requirements
@@ -111,6 +114,10 @@ New-NetFirewallRule -DisplayName "CastDesk" -Direction Inbound -Program "<path t
 
 If Windows has reserved port 8765 (Hyper-V and WSL reserve port ranges, which can move after a reboot), CastDesk uses
 a free port instead; phones find it either way.
+
+Web pages can't use this port: CastDesk turns away requests that come from a website open in a browser (by their
+`Origin` header) and requests addressed to a website's name instead of an IP address, so a page can't open or stop
+the player or read its pairing details. Phones' YouTube apps aren't affected. The log shows each refusal as `403`.
 
 ## Using CastDesk
 
@@ -178,7 +185,8 @@ CastDesk. The general settings and updates are on the left, the advanced ones on
 | Start CastDesk when I sign in to Windows | Off (the installer offers to turn it on) | Adds CastDesk to your startup apps, starting quietly in the tray. |
 | Check for updates automatically | On | Checks for a newer release 30 seconds after CastDesk starts (see [Updates](#updates)). |
 | Show what I'm playing in Discord | On | While a video or song plays, your Discord status shows it: **Listening to** for music, **Watching** for other videos, with the title, channel, thumbnail, a progress bar and a **Listen on YouTube** or **Watch on YouTube** button. Your Discord friends see this; turn it off if you'd rather they didn't. Nothing shows while paused or on the home screen. Needs the Discord app running on this PC; CastDesk connects to it on its own (no sign-in). |
-| Show the thumbnail on the lock screen | Off | While a video or song plays, its thumbnail is your lock screen picture, fitted over a blurred copy if it isn't the shape of your screen. Anyone who can see the locked screen sees it. Videos without a sharp thumbnail (mostly old ones) leave your lock screen as it is. See [How it works](#how-it-works) for what happens to Spotlight and slideshows. |
+| Show the thumbnail on the lock screen | On | While a video or song plays, its thumbnail is your lock screen picture, in the **Look** below. Anyone who can see the locked screen sees it. A video whose thumbnail is too small for the look you chose leaves your lock screen as it is (rare when centred). See [How it works](#how-it-works) for what happens to Spotlight and slideshows. |
+| Look (lock screen) | Centred, on tinted glass | **Centred, on tinted glass** puts the thumbnail in the middle, half the screen wide, on frosted glass in its main colour. **Fill the screen** makes it fill the lock screen; a thumbnail that isn't the shape of your screen (a square album cover) sits whole over a blurred copy of itself. A change redraws the picture straight away. |
 | Port phones connect to | 8765 | If Windows has reserved it or another app uses it, CastDesk picks a free one. |
 | TV identity (user agent) YouTube sees | A Chromecast with Google TV | Change it only if YouTube stops showing its TV app; **Use the default** puts it back. |
 
@@ -206,7 +214,7 @@ Everything CastDesk keeps is in `%LOCALAPPDATA%\CastDesk`:
 
 | File | What it holds |
 |---|---|
-| `settings.json` | The settings above: `FriendlyName`, `FullscreenOnCast`, `HideWhenCastingStops`, `KeepPlayingWhenPhoneDisconnects`, `CheckForUpdates`, `ShowInDiscord`, `ShowOnLockScreen`, `DialPort`, `UserAgent` (empty means the default). Missing fields keep their defaults. |
+| `settings.json` | The settings above: `FriendlyName`, `FullscreenOnCast`, `HideWhenCastingStops`, `KeepPlayingWhenPhoneDisconnects`, `CheckForUpdates`, `ShowInDiscord`, `ShowOnLockScreen`, `LockScreenFillsScreen`, `DialPort`, `UserAgent` (empty means the default). Missing fields keep their defaults. |
 | `device-id.txt` | The ID phones remember CastDesk by. Keep it, or phones will list CastDesk twice for a while. |
 | `WebView2\` | The TV app's browser profile, with your YouTube sign-in. Deleting it signs you out. |
 | `castdesk.log` | The log. A new one starts at 1 MB, keeping the previous one as `castdesk.log.old`. |
@@ -252,7 +260,9 @@ In the registry:
    music videos and podcast episodes a `musicVideoType` (for example `MUSIC_VIDEO_TYPE_OMV`), and other videos have
    none. Closing the window during music only hides it; closing it during another video hides it and pauses the
    video, and CastDesk shows the window again when that video plays. If the TV app goes back to its home screen
-   while CastDesk is in the tray, or the phone disconnects, CastDesk unloads the TV app.
+   while CastDesk is in the tray, or the phone disconnects, CastDesk unloads the TV app. Once it has been unloaded for
+   5 minutes, CastDesk also closes WebView2's browser processes, which hold a few hundred MB even on a blank page; the
+   next cast or **Show Player** starts them again, a second or two slower, and your sign-in is kept.
 8. **Discord.** With **Show what I'm playing in Discord** on, CastDesk sets your Discord status through the Discord
    app's local connection on this PC (Discord's Rich Presence, a named pipe), so nothing goes through another
    server. The name and cover come from CastDesk's application in Discord's developer portal. The thumbnail is
@@ -268,7 +278,12 @@ In the registry:
 10. **Lock screen.** An app can't draw over the lock screen, so with **Show the thumbnail on the lock screen** on,
    CastDesk replaces the lock screen picture while something plays. It does this as playback starts, not when the PC
    locks, because Windows takes about a second to apply a picture and your own lock screen would show first. It uses
-   YouTube's largest thumbnail and leaves your lock screen alone if the art is under 600 pixels on its shorter side.
+   the sharpest thumbnail YouTube has. Filling the screen, it needs one at least 600 pixels on its shorter side (most
+   videos have a 1280×720 one); centred, where it's only half the screen wide, 340 pixels is enough, so older videos
+   with only a 640×480 thumbnail still show. Smaller than that, it leaves your lock screen alone.
+   By default the picture puts the thumbnail in the middle at half the screen's width, on frosted glass in the
+   thumbnail's main colour; with **Look: Fill the screen** the thumbnail fills it instead. Either way, the bars YouTube
+   adds beside album covers are cropped off, so a song shows just its square cover.
 
    Setting a picture turns off Windows Spotlight and slideshows, so CastDesk first saves your settings and a copy of
    your picture in `LockScreen\`. Five seconds after playback stops it puts them back, or at its next start if it
@@ -283,6 +298,11 @@ In the registry:
 - **Log file:** `%LOCALAPPDATA%\CastDesk\castdesk.log`. Lines marked `[dial]` show each request from a phone.
 - **CastDesk isn't in the Cast menu:** check that the phone and PC are on the same network and that Windows Firewall
   allows CastDesk.exe, then use **Restart Receiver**.
+- **The phone sees CastDesk but casting fails, and the log shows `403`:** CastDesk turned the request away as one
+  from a web page (see [Windows Firewall](#windows-firewall)). The `[dial]` line shows the request's `Origin`;
+  please [open an issue](https://github.com/Shyam-Sangeeth/CastDesk/issues) with that line.
+- **The first cast after a while takes a moment longer:** after 5 minutes in the tray with nothing playing, CastDesk
+  closes its browser to free memory, and a cast starts it again. That's normal.
 - **CastDesk appears twice:** the phone still remembers an older entry. It disappears within about 30 minutes, or
   sooner if you turn the phone's Wi-Fi off and on.
 - **YouTube says this browser isn't supported, or the TV app looks wrong:** YouTube may have stopped accepting the TV
@@ -306,8 +326,9 @@ In the registry:
   for CastDesk in Discord's **Game Overlay** (or **Registered Games**) settings.
 - **The player keeps playing after disconnecting:** that's the default. Turn off **Settings… → Keep playing when my
   phone disconnects**. A `[tv] Phones connected:` line in the log shows each change.
-- **No thumbnail on the lock screen:** turn on **Settings… → Lock screen**. Some videos have no sharp thumbnail, and
-  a lock screen set by your workplace is left alone. Lines marked `[lock]` in the log say why.
+- **No thumbnail on the lock screen:** check **Settings… → Lock screen** is on. A video whose thumbnail is too small
+  for the look you chose is skipped (try **Look: Centred**, which needs a smaller one), and a lock screen set by your
+  workplace is left alone. Lines marked `[lock]` in the log say why.
 - **A thumbnail stayed on the lock screen, or Spotlight or your slideshow didn't come back:** start CastDesk once, which
   retries, then lock again. If that doesn't help, choose your lock screen again under Windows' **Settings →
   Personalization → Lock screen**.
@@ -381,7 +402,7 @@ Dial/
 Tv/
   TvAppView.cs         YouTube's TV app in WebView2, with the TV identity
   page-bridge.js       Injected into the TV app: media state, fullscreen keys, Back and Fullscreen buttons,
-                       videos playing while minimized, format answers (qualities above 720p)
+                       videos playing while minimized, format answers (qualities above 720p), connected phones
   MediaState.cs        What the TV app is playing
 Media/
   WindowsMediaControls.cs  CastDesk's entry in Windows' media controls

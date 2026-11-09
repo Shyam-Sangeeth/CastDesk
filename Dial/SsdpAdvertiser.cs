@@ -56,7 +56,7 @@ internal sealed class SsdpAdvertiser : IDisposable
         _stopping = new CancellationTokenSource();
         _ = ReceiveLoopAsync(socket, _stopping.Token);
         NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
-        _aliveTimer = new System.Threading.Timer(_ => SendNotifications("ssdp:alive"), null, TimeSpan.Zero, AliveInterval);
+        _aliveTimer = new System.Threading.Timer(_ => OnPoolThread(() => SendNotifications("ssdp:alive")), null, TimeSpan.Zero, AliveInterval);
         AppLog.Write("host", $"SSDP discovery on {string.Join(", ", _joinedAddresses)}.");
     }
 
@@ -74,11 +74,27 @@ internal sealed class SsdpAdvertiser : IDisposable
         _joinedAddresses.Clear();
     }
 
-    private void OnNetworkAddressChanged(object? sender, EventArgs e)
+    private void OnNetworkAddressChanged(object? sender, EventArgs e) => OnPoolThread(() =>
     {
         // A new Wi-Fi network or adapter: listen on it too and announce CastDesk there.
         JoinMulticastGroups();
         SendNotifications("ssdp:alive");
+    });
+
+    /// <summary>
+    /// Runs timer and network-change work, which arrives on pool threads where any exception would end CastDesk
+    /// (listing the adapters can throw NetworkInformationException while they change, for one).
+    /// </summary>
+    private static void OnPoolThread(Action work)
+    {
+        try
+        {
+            work();
+        }
+        catch (Exception exception)
+        {
+            AppLog.Write("host", $"SSDP announcement failed: {exception.Message}");
+        }
     }
 
     private void JoinMulticastGroups()
@@ -98,6 +114,10 @@ internal sealed class SsdpAdvertiser : IDisposable
             catch (SocketException exception)
             {
                 AppLog.Write("host", $"SSDP could not listen on {address}: {exception.SocketErrorCode}");
+            }
+            catch (ObjectDisposedException)
+            {
+                return; // stopped meanwhile: a network change arrived (on a pool thread) as the receiver stopped
             }
         }
     }

@@ -43,8 +43,10 @@ internal sealed class AudioSessionRenamer : IDisposable
             var ownProcesses = ProcessTree.GetDescendantsAndSelf(browserProcessId);
             RenameSessions(ownProcesses);
         }
-        catch (Exception exception) when (exception is COMException or InvalidCastException)
+        catch (Exception exception)
         {
+            // On a timer thread, where any exception would end CastDesk. Marshal.ThrowExceptionForHR turns some
+            // HRESULTs into other types (E_ACCESSDENIED into UnauthorizedAccessException, for one).
             AppLog.Write("host", $"Could not rename the volume mixer entry: {exception.Message}");
         }
         finally
@@ -60,13 +62,43 @@ internal sealed class AudioSessionRenamer : IDisposable
         {
             Marshal.ThrowExceptionForHR(enumerator.EnumAudioEndpoints(CoreAudio.DataFlowRender, CoreAudio.DeviceStateActive, out var devices));
             Marshal.ThrowExceptionForHR(devices.GetCount(out var deviceCount));
-            for (uint deviceIndex = 0; deviceIndex < deviceCount; deviceIndex++)
+            try
             {
-                if (devices.Item(deviceIndex, out var device) != 0) continue;
-                var managerId = typeof(CoreAudio.IAudioSessionManager2).GUID;
-                if (device.Activate(ref managerId, CoreAudio.ClsCtxAll, IntPtr.Zero, out var managerObject) != 0) continue;
-                var manager = (CoreAudio.IAudioSessionManager2)managerObject;
-                if (manager.GetSessionEnumerator(out var sessions) != 0) continue;
+                for (uint deviceIndex = 0; deviceIndex < deviceCount; deviceIndex++)
+                {
+                    if (devices.Item(deviceIndex, out var device) != 0) continue;
+                    try
+                    {
+                        RenameDeviceSessions(device, ownProcesses);
+                    }
+                    finally
+                    {
+                        Marshal.ReleaseComObject(device);
+                    }
+                }
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(devices);
+            }
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(enumerator);
+        }
+    }
+
+    /// <summary>Renames CastDesk's sessions on one device. Every COM object is released, even when a call fails.</summary>
+    private void RenameDeviceSessions(CoreAudio.IMMDevice device, HashSet<int> ownProcesses)
+    {
+        var managerId = typeof(CoreAudio.IAudioSessionManager2).GUID;
+        if (device.Activate(ref managerId, CoreAudio.ClsCtxAll, IntPtr.Zero, out var managerObject) != 0) return;
+        var manager = (CoreAudio.IAudioSessionManager2)managerObject;
+        try
+        {
+            if (manager.GetSessionEnumerator(out var sessions) != 0) return;
+            try
+            {
                 sessions.GetCount(out var sessionCount);
                 for (var sessionIndex = 0; sessionIndex < sessionCount; sessionIndex++)
                 {
@@ -80,15 +112,15 @@ internal sealed class AudioSessionRenamer : IDisposable
                         Marshal.ReleaseComObject(session);
                     }
                 }
-                Marshal.ReleaseComObject(sessions);
-                Marshal.ReleaseComObject(manager);
-                Marshal.ReleaseComObject(device);
             }
-            Marshal.ReleaseComObject(devices);
+            finally
+            {
+                Marshal.ReleaseComObject(sessions);
+            }
         }
         finally
         {
-            Marshal.ReleaseComObject(enumerator);
+            Marshal.ReleaseComObject(manager);
         }
     }
 

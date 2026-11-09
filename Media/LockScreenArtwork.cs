@@ -35,11 +35,22 @@ internal sealed class LockScreenArtwork : IDisposable
     private const int MaxDownloadBytes = 20 * 1024 * 1024;
     private const int MaxScreenSide = 3840;
 
+    /// <summary>The art is centred at this share of the screen's width, on a frosted gray background.</summary>
+    private const double ArtWidthShare = 0.5;
+    private const double ArtMaxHeightShare = 0.6;
+
     /// <summary>
-    /// Art with a shorter side below this looks blurred on a full screen, so the lock screen is left alone.
+    /// Filling the screen, art with a shorter side below this looks blurred, so the lock screen is left alone.
     /// YouTube's largest thumbnails (1280x720, or a 720x720 cover inside bars) pass; its 640x480 and 480x360 ones don't.
     /// </summary>
-    private const int MinArtSide = 600;
+    private const int MinArtSideFilled = 600;
+
+    /// <summary>
+    /// Centred, the art is only half the screen wide (960 px on a 1080p screen), so a smaller one still looks fine:
+    /// YouTube's 640x480 size (640x358 inside its bars) passes, and so does the 480x360 one of an old 4:3 video,
+    /// which has no bars; a 480x360 thumbnail of a widescreen video (480x268 inside its bars) doesn't.
+    /// </summary>
+    private const int MinArtSideCentred = 340;
 
     private const string SpotlightKey = @"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
     private const string SubscriptionsKey = SpotlightKey + @"\Subscriptions";
@@ -60,6 +71,7 @@ internal sealed class LockScreenArtwork : IDisposable
     private readonly Task _worker;
     private MediaState _state = MediaState.Nothing;
     private bool _enabled;
+    private bool _fillScreen;
     private bool _closing;
 
     // Only the worker uses these.
@@ -69,9 +81,12 @@ internal sealed class LockScreenArtwork : IDisposable
     private DateTime? _stoppedAt;
     private bool _blockedLogged;
 
-    public LockScreenArtwork(bool enabled)
+    /// <param name="enabled">Whether to show anything (Settings → Lock screen).</param>
+    /// <param name="fillScreen">"Fill the screen" rather than "Centred" (see <see cref="FillScreen"/>).</param>
+    public LockScreenArtwork(bool enabled, bool fillScreen)
     {
         _enabled = enabled;
+        _fillScreen = fillScreen;
         _worker = Task.Run(RunAsync);
     }
 
@@ -80,6 +95,19 @@ internal sealed class LockScreenArtwork : IDisposable
         set
         {
             lock (_gate) _enabled = value;
+            Wake();
+        }
+    }
+
+    /// <summary>
+    /// The picture's look: true fills the screen with the art (over a blur of it if its shape differs), false puts it
+    /// in the centre at half the screen's width on tinted glass. A change redraws what's showing.
+    /// </summary>
+    public bool FillScreen
+    {
+        set
+        {
+            lock (_gate) _fillScreen = value;
             Wake();
         }
     }
@@ -121,11 +149,12 @@ internal sealed class LockScreenArtwork : IDisposable
         while (true)
         {
             MediaState state;
-            bool enabled, closing;
+            bool enabled, fillScreen, closing;
             lock (_gate)
             {
                 state = _state;
                 enabled = _enabled;
+                fillScreen = _fillScreen;
                 closing = _closing;
             }
 
@@ -138,10 +167,12 @@ internal sealed class LockScreenArtwork : IDisposable
                     return;
                 }
 
-                if (enabled && KeyOf(state) is { } key)
+                if (enabled && KeyOf(state) is { } video)
                 {
                     _stoppedAt = null;
-                    if (key != _shownKey && key != _failedKey) await ShowArtworkAsync(state, key).ConfigureAwait(false);
+                    // The look is part of the key, so changing it in Settings redraws the picture.
+                    var key = $"{video} ({(fillScreen ? "filling the screen" : "centred")})";
+                    if (key != _shownKey && key != _failedKey) await ShowArtworkAsync(state, key, fillScreen).ConfigureAwait(false);
                 }
                 else
                 {
@@ -180,7 +211,7 @@ internal sealed class LockScreenArtwork : IDisposable
         return state.Artwork.Length > 0 ? state.Artwork : null;
     }
 
-    private async Task ShowArtworkAsync(MediaState state, string key)
+    private async Task ShowArtworkAsync(MediaState state, string key, bool fillScreen)
     {
         if (BlockedReason() is { } reason)
         {
@@ -190,7 +221,7 @@ internal sealed class LockScreenArtwork : IDisposable
             return;
         }
 
-        var picture = await MakePictureAsync(state, key).ConfigureAwait(false);
+        var picture = await MakePictureAsync(state, key, fillScreen).ConfigureAwait(false);
         if (picture == null)
         {
             // No good picture for this video. Don't leave the last video's thumbnail on the lock screen.
@@ -221,17 +252,17 @@ internal sealed class LockScreenArtwork : IDisposable
     }
 
     /// <summary>Saves the picture for a video and returns its path, or null if there's no good one.</summary>
-    private static async Task<string?> MakePictureAsync(MediaState state, string key)
+    private static async Task<string?> MakePictureAsync(MediaState state, string key, bool fillScreen)
     {
         try
         {
-            using var source = await DownloadThumbnailAsync(state).ConfigureAwait(false);
+            using var source = await DownloadThumbnailAsync(state, fillScreen ? MinArtSideFilled : MinArtSideCentred).ConfigureAwait(false);
             if (source == null)
             {
                 AppLog.Write("lock", $"No thumbnail good enough for the lock screen for {key}.");
                 return null;
             }
-            using var composed = ComposePicture(source, ScreenSize());
+            using var composed = fillScreen ? ComposeFilledPicture(source, ScreenSize()) : ComposePicture(source, ScreenSize());
             Directory.CreateDirectory(Folder);
             // A new name each time: Windows may refuse a file named like the previous one.
             var picture = Path.Combine(Folder, $"now-{DateTime.UtcNow.Ticks}.jpg");
@@ -438,26 +469,41 @@ internal sealed class LockScreenArtwork : IDisposable
     // ======================================================================
 
     /// <summary>
-    /// YouTube's largest thumbnail, or the page's own artwork, if it's sharp enough for a full screen (see
-    /// <see cref="MinArtSide"/>); otherwise null. Not every video has the largest size.
+    /// The sharpest art available whose shorter side (inside any bars) is at least <paramref name="minSide"/>
+    /// pixels: YouTube's largest thumbnail, the page's own artwork, then YouTube's 640x480 and 480x360 sizes. Null if none is
+    /// sharp enough. Not every video has every size.
     /// </summary>
-    private static async Task<Bitmap?> DownloadThumbnailAsync(MediaState state)
+    private static async Task<Bitmap?> DownloadThumbnailAsync(MediaState state, int minSide)
     {
         var urls = new List<string>();
-        if (state.VideoId.Length > 0) urls.Add($"https://i.ytimg.com/vi/{Uri.EscapeDataString(state.VideoId)}/maxresdefault.jpg");
+        var id = Uri.EscapeDataString(state.VideoId);
+        if (state.VideoId.Length > 0) urls.Add($"https://i.ytimg.com/vi/{id}/maxresdefault.jpg");
         if (Uri.TryCreate(state.Artwork, UriKind.Absolute, out var artwork) && artwork.Scheme == Uri.UriSchemeHttps) urls.Add(state.Artwork);
+        if (state.VideoId.Length > 0 && minSide < MinArtSideFilled)
+        {
+            urls.Add($"https://i.ytimg.com/vi/{id}/sddefault.jpg");
+            urls.Add($"https://i.ytimg.com/vi/{id}/hqdefault.jpg"); // passes only for old 4:3 videos (no bars)
+        }
 
         foreach (var url in urls)
         {
-            using var response = await Http.GetAsync(url).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) continue;
-            var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-            using var stream = new MemoryStream(bytes);
-            using var image = Image.FromStream(stream);
-            var bitmap = new Bitmap(image);
-            var area = FindPictureArea(bitmap);
-            if (Math.Min(area.Width, area.Height) >= MinArtSide) return bitmap;
-            bitmap.Dispose();
+            try
+            {
+                using var response = await Http.GetAsync(url).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) continue;
+                var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+                using var stream = new MemoryStream(bytes);
+                using var image = Image.FromStream(stream);
+                var bitmap = new Bitmap(image);
+                var area = FindPictureArea(bitmap);
+                if (Math.Min(area.Width, area.Height) >= minSide) return bitmap;
+                bitmap.Dispose();
+            }
+            catch (Exception exception) when (exception is ArgumentException or HttpRequestException or TaskCanceledException or IOException)
+            {
+                // Not an image, or a failed download: try the next size.
+                AppLog.Write("lock", $"Skipping {url}: {exception.Message}");
+            }
         }
         return null;
     }
@@ -470,10 +516,159 @@ internal sealed class LockScreenArtwork : IDisposable
     }
 
     /// <summary>
-    /// A picture the size of the screen. Art with the screen's shape fills it. Any other shape (a square album
-    /// cover) is fitted whole over a blurred, darkened copy of itself that fills the gaps.
+    /// A picture the size of the screen: the art, whole, in the centre at half the screen's width (at most
+    /// <see cref="ArtMaxHeightShare"/> of its height, for square covers), on frosted, glossy gray.
     /// </summary>
     internal static Bitmap ComposePicture(Bitmap source, Size screen)
+    {
+        var art = FindPictureArea(source);
+        var canvas = new Bitmap(screen.Width, screen.Height, PixelFormat.Format24bppRgb);
+        DrawFrostedBackground(canvas, MainColor(source, art));
+        using var graphics = Graphics.FromImage(canvas);
+        graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        graphics.CompositingQuality = CompositingQuality.HighQuality;
+
+        // Tiling stops the scaler from fading the art's edges towards black.
+        using var edges = new ImageAttributes();
+        edges.SetWrapMode(WrapMode.TileFlipXY);
+
+        var scale = Math.Min(screen.Width * ArtWidthShare / art.Width, screen.Height * ArtMaxHeightShare / art.Height);
+        var width = (int)Math.Round(art.Width * scale);
+        var height = (int)Math.Round(art.Height * scale);
+        var fitted = new Rectangle((screen.Width - width) / 2, (screen.Height - height) / 2, width, height);
+        DrawShadow(graphics, fitted);
+        DrawPart(graphics, source, fitted, art, edges);
+        return canvas;
+    }
+
+    /// <summary>
+    /// Frosted, glossy glass tinted with the art's main colour, worked out per pixel (GDI+'s gradient brushes leave
+    /// rings): a diagonal gradient, soft glows like light behind frosted glass, a band of gloss, darker edges, and
+    /// fine grain against banding.
+    /// </summary>
+    private static void DrawFrostedBackground(Bitmap canvas, Color tint)
+    {
+        // The tint as multipliers that keep the brightness: a gray tint changes nothing.
+        var tintLight = Math.Max(1, tint.R * 0.299 + tint.G * 0.587 + tint.B * 0.114);
+        var tintRed = 0.15 + 0.85 * Math.Min(2.2, tint.R / tintLight);
+        var tintGreen = 0.15 + 0.85 * Math.Min(2.2, tint.G / tintLight);
+        var tintBlue = 0.15 + 0.85 * Math.Min(2.2, tint.B / tintLight);
+        (double X, double Y, double Radius, double Strength)[] glows = [(0.15, 0.10, 0.32, 46), (0.88, 0.22, 0.22, 24), (0.60, 1.00, 0.30, 20)];
+        var data = canvas.LockBits(new Rectangle(Point.Empty, canvas.Size), ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            int width = data.Width, height = data.Height;
+            var bytes = new byte[data.Stride * height];
+            var aspect = (double)width / height;
+
+            // Every term splits into a part for the column and a part for the row (a Gaussian glow is the product
+            // of one along x and one along y), so they're worked out once per column and row, not per pixel.
+            var columnBase = new double[width];
+            var columnEdge = new double[width];
+            var columnGlow = new double[glows.Length, width];
+            for (var x = 0; x < width; x++)
+            {
+                var u = (double)x / width;
+                columnBase[x] = 84 - 46 * u * 0.4;
+                columnEdge[x] = (u - 0.5) * (u - 0.5) * 4;
+                for (var g = 0; g < glows.Length; g++)
+                {
+                    var dx = (u - glows[g].X) * aspect;
+                    columnGlow[g, x] = glows[g].Strength * Math.Exp(-dx * dx / (2 * glows[g].Radius * glows[g].Radius));
+                }
+            }
+            // The gloss runs along the diagonal: a table by position across it.
+            const int sheenSteps = 4096;
+            var sheen = new double[sheenSteps + 1];
+            for (var i = 0; i <= sheenSteps; i++)
+            {
+                var diagonal = (double)i / sheenSteps - 0.32;
+                sheen[i] = 18 * Math.Exp(-diagonal * diagonal / 0.006);
+            }
+
+            var rowGlow = new double[glows.Length];
+            var noise = 0x9E3779B9u; // xorshift: the grain needs no better randomness, and Random per pixel is slow
+            for (var y = 0; y < height; y++)
+            {
+                var v = (double)y / height;
+                var rowBase = -46 * v * 0.6;
+                var rowEdge = (v - 0.5) * (v - 0.5) * 4;
+                for (var g = 0; g < glows.Length; g++)
+                {
+                    var dy = v - glows[g].Y;
+                    rowGlow[g] = Math.Exp(-dy * dy / (2 * glows[g].Radius * glows[g].Radius));
+                }
+                var row = y * data.Stride;
+                for (var x = 0; x < width; x++)
+                {
+                    var value = columnBase[x] + rowBase;
+                    for (var g = 0; g < glows.Length; g++) value += columnGlow[g, x] * rowGlow[g];
+                    value += sheen[(int)(((double)x / width * aspect + v) / (aspect + 1) * sheenSteps)];
+                    value *= 1 - 0.38 * Math.Min(1, (columnEdge[x] + rowEdge) / 2);
+                    noise ^= noise << 13;
+                    noise ^= noise >> 17;
+                    noise ^= noise << 5;
+                    value += (int)(noise % 5) - 2;
+
+                    var index = row + x * 3; // blue, green, red
+                    bytes[index] = (byte)Math.Clamp(value * tintBlue, 0, 255);
+                    bytes[index + 1] = (byte)Math.Clamp(value * tintGreen, 0, 255);
+                    bytes[index + 2] = (byte)Math.Clamp(value * tintRed, 0, 255);
+                }
+            }
+            System.Runtime.InteropServices.Marshal.Copy(bytes, 0, data.Scan0, bytes.Length);
+        }
+        finally
+        {
+            canvas.UnlockBits(data);
+        }
+    }
+
+    /// <summary>
+    /// The art's main colour: the average of a grid of samples, weighted towards vivid ones so a colourful cover on
+    /// a pale background still gives its colour rather than a muddy gray.
+    /// </summary>
+    private static Color MainColor(Bitmap image, Rectangle area)
+    {
+        double red = 0, green = 0, blue = 0, total = 0;
+        for (var row = 0; row < 24; row++)
+        {
+            for (var column = 0; column < 24; column++)
+            {
+                var pixel = image.GetPixel(area.X + (int)((column + 0.5) * area.Width / 24), area.Y + (int)((row + 0.5) * area.Height / 24));
+                var saturation = (Math.Max(pixel.R, Math.Max(pixel.G, pixel.B)) - Math.Min(pixel.R, Math.Min(pixel.G, pixel.B))) / 255.0;
+                var weight = 0.1 + saturation * saturation * 4;
+                red += pixel.R * weight;
+                green += pixel.G * weight;
+                blue += pixel.B * weight;
+                total += weight;
+            }
+        }
+        return Color.FromArgb((int)(red / total), (int)(green / total), (int)(blue / total));
+    }
+
+    /// <summary>A soft shadow under the art, so it sits above the glass.</summary>
+    private static void DrawShadow(Graphics graphics, Rectangle art)
+    {
+        var spread = Math.Max(8, art.Width / 24);
+        using var brush = new SolidBrush(Color.FromArgb(7, 0, 0, 0));
+        for (var step = spread; step > 0; step -= 2)
+        {
+            var shadow = Rectangle.Inflate(art, step, step);
+            shadow.Offset(0, spread / 2);
+            // Only the ring outside the art: the art covers the rest, and blending under it ~40 times was slow.
+            using var ring = new Region(shadow);
+            ring.Exclude(art);
+            graphics.FillRegion(brush, ring);
+        }
+    }
+
+    /// <summary>
+    /// "Fill the screen": art with the screen's shape fills it. Any other shape (a square album cover) is fitted
+    /// whole over a blurred, darkened copy of itself that fills the gaps.
+    /// </summary>
+    internal static Bitmap ComposeFilledPicture(Bitmap source, Size screen)
     {
         var art = FindPictureArea(source);
         var canvas = new Bitmap(screen.Width, screen.Height, PixelFormat.Format24bppRgb);
@@ -544,9 +739,6 @@ internal sealed class LockScreenArtwork : IDisposable
         }
     }
 
-    private static void DrawPart(Graphics graphics, Image image, Rectangle to, Rectangle from, ImageAttributes attributes) =>
-        graphics.DrawImage(image, to, from.X, from.Y, from.Width, from.Height, GraphicsUnit.Pixel, attributes);
-
     /// <summary>The centre of <paramref name="area"/> with the given width/height shape.</summary>
     private static Rectangle CropToShape(Rectangle area, double shape)
     {
@@ -559,9 +751,12 @@ internal sealed class LockScreenArtwork : IDisposable
         return new Rectangle(area.X, area.Y + (area.Height - height) / 2, area.Width, height);
     }
 
+    private static void DrawPart(Graphics graphics, Image image, Rectangle to, Rectangle from, ImageAttributes attributes) =>
+        graphics.DrawImage(image, to, from.X, from.Y, from.Width, from.Height, GraphicsUnit.Pixel, attributes);
+
     /// <summary>
-    /// The part of a thumbnail inside any black bars. YouTube's smaller sizes are 4:3 with bars above and below a
-    /// 16:9 video, and some album covers have bars at the sides; left in, they'd stop the art from filling the screen.
+    /// The part of a thumbnail inside any bars. YouTube's smaller sizes are 4:3 with black bars above and below a
+    /// 16:9 video, and album tracks put the square cover between flat gray bars; left in, they'd show as a frame.
     /// </summary>
     internal static Rectangle FindPictureArea(Bitmap image)
     {
@@ -569,35 +764,83 @@ internal sealed class LockScreenArtwork : IDisposable
         var maxBarWidth = (int)(image.Width * maxBarShare);
         var maxBarHeight = (int)(image.Height * maxBarShare);
 
-        int top = 0, bottom = 0, left = 0, right = 0;
-        while (top < maxBarHeight && IsBlackRow(image, top)) top++;
-        while (bottom < maxBarHeight && IsBlackRow(image, image.Height - 1 - bottom)) bottom++;
-        while (left < maxBarWidth && IsBlackColumn(image, left)) left++;
-        while (right < maxBarWidth && IsBlackColumn(image, image.Width - 1 - right)) right++;
+        var top = BarLength(image, Edge.Top, maxBarHeight, out var topColor);
+        var bottom = BarLength(image, Edge.Bottom, maxBarHeight, out var bottomColor);
+        var left = BarLength(image, Edge.Left, maxBarWidth, out var leftColor);
+        var right = BarLength(image, Edge.Right, maxBarWidth, out var rightColor);
+        var (keptTop, keptBottom, colouredRows) = KeepBars(top, topColor, bottom, bottomColor, image.Height, maxBarHeight);
+        var (keptLeft, keptRight, colouredColumns) = KeepBars(left, leftColor, right, rightColor, image.Width, maxBarWidth);
 
-        // Reaching the limit means a dark picture, not a bar.
-        if (top == maxBarHeight || bottom == maxBarHeight) top = bottom = 0;
-        if (left == maxBarWidth || right == maxBarWidth) left = right = 0;
+        // Coloured bars only frame an album cover, so they go only if a square is left. Otherwise they're probably
+        // a plain backdrop around a centred subject: keep it, and crop black bars alone.
+        var width = image.Width - keptLeft - keptRight;
+        var height = image.Height - keptTop - keptBottom;
+        var square = width > 0 && height > 0 && Math.Abs((double)width / height - 1) < 0.1;
+        if ((colouredRows || colouredColumns) && !square)
+        {
+            if (colouredRows) (keptTop, keptBottom) = BlackOnly(top, topColor, bottom, bottomColor);
+            if (colouredColumns) (keptLeft, keptRight) = BlackOnly(left, leftColor, right, rightColor);
+        }
+        (top, bottom, left, right) = (keptTop, keptBottom, keptLeft, keptRight);
+
+        // One more line past each bar: JPEG blends the bar into the art's first line, which would show as a thin frame.
+        static int PastBlend(int bar) => bar > 0 ? bar + 1 : 0;
+        (top, bottom, left, right) = (PastBlend(top), PastBlend(bottom), PastBlend(left), PastBlend(right));
         return Rectangle.FromLTRB(left, top, image.Width - right, image.Height - bottom);
     }
 
-    private static bool IsBlackRow(Bitmap image, int y)
+    private enum Edge { Top, Bottom, Left, Right }
+
+    /// <summary>
+    /// How many rows or columns in from <paramref name="edge"/> are one flat colour (up to <paramref name="max"/>),
+    /// and that colour.
+    /// </summary>
+    private static int BarLength(Bitmap image, Edge edge, int max, out Color color)
     {
-        var step = Math.Max(1, image.Width / 32);
-        for (var x = 0; x < image.Width; x += step)
-            if (!IsBlack(image.GetPixel(x, y))) return false;
-        return true;
+        var horizontal = edge is Edge.Top or Edge.Bottom;
+        var along = horizontal ? image.Width : image.Height;
+        var step = Math.Max(1, along / 32);
+        Color At(int line, int position) => edge switch
+        {
+            Edge.Top => image.GetPixel(position, line),
+            Edge.Bottom => image.GetPixel(position, image.Height - 1 - line),
+            Edge.Left => image.GetPixel(line, position),
+            _ => image.GetPixel(image.Width - 1 - line, position),
+        };
+
+        color = At(0, along / 2);
+        var length = 0;
+        while (length < max)
+        {
+            for (var position = 0; position < along; position += step)
+                if (!IsClose(At(length, position), color)) return length;
+            length++;
+        }
+        return length;
     }
 
-    private static bool IsBlackColumn(Bitmap image, int x)
+    /// <summary>
+    /// Which of two opposite bars to crop. Black bars always go. A bar of another flat colour (YouTube puts album
+    /// covers between dark gray bars) goes only with a matching one on the other side, so a plain sky at the top of
+    /// a photo isn't cut off. Bars reaching the limit mean a dark or plain picture, not bars.
+    /// </summary>
+    /// <returns>The bars to crop, and whether they are a coloured (not black) matching pair.</returns>
+    private static (int First, int Second, bool Coloured) KeepBars(int first, Color firstColor, int second, Color secondColor, int size, int max)
     {
-        var step = Math.Max(1, image.Height / 32);
-        for (var y = 0; y < image.Height; y += step)
-            if (!IsBlack(image.GetPixel(x, y))) return false;
-        return true;
+        if (first >= max || second >= max) return (0, 0, false);
+        if (first > 0 && second > 0 && Math.Abs(first - second) <= size * 0.02 + 2 && IsClose(firstColor, secondColor))
+            return (first, second, !(IsBlack(firstColor) && IsBlack(secondColor)));
+        var (blackFirst, blackSecond) = BlackOnly(first, firstColor, second, secondColor);
+        return (blackFirst, blackSecond, false);
     }
 
-    // Not exactly zero: JPEG compression leaves faint noise in black areas.
+    private static (int, int) BlackOnly(int first, Color firstColor, int second, Color secondColor) =>
+        (first > 0 && IsBlack(firstColor) ? first : 0, second > 0 && IsBlack(secondColor) ? second : 0);
+
+    // Not exact: JPEG compression leaves faint noise in flat areas.
+    private static bool IsClose(Color a, Color b) =>
+        Math.Abs(a.R - b.R) <= 20 && Math.Abs(a.G - b.G) <= 20 && Math.Abs(a.B - b.B) <= 20;
+
     private static bool IsBlack(Color color) => Math.Max(color.R, Math.Max(color.G, color.B)) <= 24;
 
     private static void SaveJpeg(Bitmap picture, string path)

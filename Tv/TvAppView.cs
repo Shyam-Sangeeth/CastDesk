@@ -17,7 +17,7 @@ internal sealed class TvAppView : UserControl
 {
     private const string TvAppUrl = "https://www.youtube.com/tv";
 
-    private readonly WebView2 _webView = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.Black };
+    private WebView2 _webView = NewWebView(); // replaced by ReleaseBrowser
     private CoreWebView2Environment? _environment;
     private Task? _initialization;
     private string _screenInfoUrl = "";
@@ -26,6 +26,26 @@ internal sealed class TvAppView : UserControl
     {
         BackColor = Color.Black;
         Controls.Add(_webView);
+    }
+
+    private static WebView2 NewWebView() => new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.Black };
+
+    /// <summary>
+    /// Closes the browser and its processes, which hold a few hundred MB even on a blank page. The sign-in stays
+    /// in the profile; the next cast or Show Player starts the browser again (a second or two slower). Only for
+    /// while the window is hidden and the TV app unloaded; does nothing while the browser is still starting.
+    /// </summary>
+    public void ReleaseBrowser()
+    {
+        if (_initialization is not { IsCompleted: true }) return;
+        AppLog.Write("tv", "Nothing cast for a while; closing the TV app's browser to free its memory.");
+        Controls.Remove(_webView);
+        _webView.Dispose();
+        _webView = NewWebView();
+        Controls.Add(_webView);
+        _environment = null;
+        _initialization = null;
+        BrowserProcessId = null;
     }
 
     /// <summary>The TV app reported its screen details (sent after a launch from the phone).</summary>
@@ -42,7 +62,21 @@ internal sealed class TvAppView : UserControl
     /// </summary>
     /// <param name="userAgent">The TV identity to present.</param>
     /// <param name="dialPort">The DIAL server port; the TV app reports its screen details to a URL on it.</param>
-    public Task InitializeAsync(string userAgent, int dialPort) => _initialization ??= InitializeCoreAsync(userAgent, dialPort);
+    public async Task InitializeAsync(string userAgent, int dialPort)
+    {
+        var initialization = _initialization ??= InitializeCoreAsync(userAgent, dialPort);
+        try
+        {
+            await initialization;
+        }
+        catch
+        {
+            // If the browser couldn't be created (a locked profile, say), let the next cast try again rather than
+            // fail for the rest of the session. Once it exists, a retry would only add its handlers twice.
+            if (_initialization == initialization && _webView.CoreWebView2 == null) _initialization = null;
+            throw;
+        }
+    }
 
     private async Task InitializeCoreAsync(string userAgent, int dialPort)
     {
