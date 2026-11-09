@@ -24,6 +24,7 @@
   - [The player window](#the-player-window)
   - [Tray icon](#tray-icon)
   - [Volume mixer and media controls](#volume-mixer-and-media-controls)
+  - [Lock screen](#lock-screen)
 - [Settings](#settings)
   - [Updates](#updates)
 - [Settings file](#settings-file)
@@ -169,6 +170,20 @@ by program file instead, such as SteelSeries Sonar, still show "Microsoft Edge W
 name from CastDesk's Start menu shortcut, which the installer creates (since 2.1.1), so a copy you run without
 installing shows there as "Unknown app".
 
+### Lock screen
+
+While a video or song plays, its thumbnail is your lock screen picture, so you can see what's playing when you lock
+the PC (Win+L). Choose the look in [Settings](#settings) under **Look**:
+
+| Centred, on tinted glass (default) | Fill the screen |
+|---|---|
+| ![The thumbnail in the middle of the lock screen, on frosted glass tinted with its colours](docs/screenshots/lock-screen-centred.jpg) | ![The thumbnail filling the lock screen, over a blurred copy of itself](docs/screenshots/lock-screen-filled.jpg) |
+| Half the screen wide, on frosted, glossy glass tinted with the thumbnail's main colour. Works with smaller thumbnails, so older videos show too. | The thumbnail fills the screen. A square album cover sits over a blurred copy of itself. Needs a large thumbnail. |
+
+Both show a song's square cover without the gray bars YouTube adds around it. Windows' clock stays on top as usual;
+Windows Spotlight's "Learn more about this picture" links are hidden while the thumbnail shows. When playback stops, your own lock screen comes back after five seconds. (The pictures above use a made-up album cover;
+CastDesk's own code drew them.)
+
 ## Settings
 
 Open **Settings…** from the tray menu. Changes take effect when you click **Save**; there's no need to restart
@@ -185,7 +200,7 @@ CastDesk. The general settings and updates are on the left, the advanced ones on
 | Start CastDesk when I sign in to Windows | Off (the installer offers to turn it on) | Adds CastDesk to your startup apps, starting quietly in the tray. |
 | Check for updates automatically | On | Checks for a newer release 30 seconds after CastDesk starts (see [Updates](#updates)). |
 | Show what I'm playing in Discord | On | While a video or song plays, your Discord status shows it: **Listening to** for music, **Watching** for other videos, with the title, channel, thumbnail, a progress bar and a **Listen on YouTube** or **Watch on YouTube** button. Your Discord friends see this; turn it off if you'd rather they didn't. Nothing shows while paused or on the home screen. Needs the Discord app running on this PC; CastDesk connects to it on its own (no sign-in). |
-| Show the thumbnail on the lock screen | On | While a video or song plays, its thumbnail is your lock screen picture, in the **Look** below. Anyone who can see the locked screen sees it. A video whose thumbnail is too small for the look you chose leaves your lock screen as it is (rare when centred). See [How it works](#how-it-works) for what happens to Spotlight and slideshows. |
+| Show the thumbnail on the lock screen | On | While a video or song plays, its thumbnail is your lock screen picture, in the **Look** below ([pictures](#lock-screen)). Anyone who can see the locked screen sees it. A video whose thumbnail is too small for the look you chose leaves your lock screen as it is (rare when centred). See [How it works](#how-it-works) for what happens to Spotlight and slideshows. |
 | Look (lock screen) | Centred, on tinted glass | **Centred, on tinted glass** puts the thumbnail in the middle, half the screen wide, on frosted glass in its main colour. **Fill the screen** makes it fill the lock screen; a thumbnail that isn't the shape of your screen (a square album cover) sits whole over a blurred copy of itself. A change redraws the picture straight away. |
 | Port phones connect to | 8765 | If Windows has reserved it or another app uses it, CastDesk picks a free one. |
 | TV identity (user agent) YouTube sees | A Chromecast with Google TV | Change it only if YouTube stops showing its TV app; **Use the default** puts it back. |
@@ -285,9 +300,11 @@ In the registry:
    thumbnail's main colour; with **Look: Fill the screen** the thumbnail fills it instead. Either way, the bars YouTube
    adds beside album covers are cropped off, so a song shows just its square cover.
 
-   Setting a picture turns off Windows Spotlight and slideshows, so CastDesk first saves your settings and a copy of
-   your picture in `LockScreen\`. Five seconds after playback stops it puts them back, or at its next start if it
-   crashed. If you choose another lock screen in Windows Settings during playback, CastDesk keeps your choice.
+   Setting a picture turns off Windows Spotlight and slideshows. CastDesk also turns off "Get fun facts, tips, tricks,
+   and more on your lock screen", so Spotlight's "Learn more about this picture" links don't sit on the thumbnail. It
+   first saves your settings and a copy of your picture in `LockScreen\`. Five seconds after playback stops it puts
+   them back, or at its next start if it crashed. If you choose another lock screen in Windows Settings during
+   playback, CastDesk keeps your choice and puts your fun facts setting back.
    Windows reads the Spotlight switch only as the lock screen starts, so if playback stops while the PC is locked,
    you see your underlying Windows picture until the next lock, when Spotlight returns. The Spotlight and slideshow
    switches aren't documented by Microsoft, so a Windows update could change them. Spotlight and plain pictures were
@@ -329,9 +346,9 @@ In the registry:
 - **No thumbnail on the lock screen:** check **Settings… → Lock screen** is on. A video whose thumbnail is too small
   for the look you chose is skipped (try **Look: Centred**, which needs a smaller one), and a lock screen set by your
   workplace is left alone. Lines marked `[lock]` in the log say why.
-- **A thumbnail stayed on the lock screen, or Spotlight or your slideshow didn't come back:** start CastDesk once, which
-  retries, then lock again. If that doesn't help, choose your lock screen again under Windows' **Settings →
-  Personalization → Lock screen**.
+- **A thumbnail stayed on the lock screen, or Spotlight, your slideshow or "Get fun facts, tips, tricks, and more"
+  didn't come back:** start CastDesk once, which retries, then lock again. If that doesn't help, set your lock screen
+  again under Windows' **Settings → Personalization → Lock screen**.
 
 ## Limitations
 

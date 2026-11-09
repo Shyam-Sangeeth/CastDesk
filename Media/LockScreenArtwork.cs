@@ -57,6 +57,7 @@ internal sealed class LockScreenArtwork : IDisposable
     private const string LockScreenKey = @"Software\Microsoft\Windows\CurrentVersion\Lock Screen";
     private const string SpotlightEnabledValue = "RotatingLockScreenEnabled";
     private const string SpotlightOverlayValue = "RotatingLockScreenOverlayEnabled";
+    private const string FunFactsValue = "SubscribedContent-338387Enabled"; // Settings changes it with the overlay switch
     private const string SlideshowEnabledValue = "SlideshowEnabled";
     private const string SubscriptionContextValue = "SubscriptionContext";
 
@@ -243,12 +244,31 @@ internal sealed class LockScreenArtwork : IDisposable
         var file = await StorageFile.GetFileFromPathAsync(picture).AsTask().ConfigureAwait(false);
         await LockScreen.SetImageFileAsync(file).AsTask().ConfigureAwait(false);
         _failedKey = null;
+        HideTips();
         AppLog.Write("lock", $"Showing the thumbnail of {key}.");
 
         var previous = _currentPicture;
         _currentPicture = picture;
         _shownKey = key;
         if (previous != null) TryDelete(previous);
+    }
+
+    /// <summary>
+    /// Turns off Windows' "fun facts, tips, tricks, and more" on the lock screen, which would otherwise put Spotlight's
+    /// "Learn more about this picture" links over the thumbnail. The backup has the user's values for the restore.
+    /// </summary>
+    private static void HideTips()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(SpotlightKey);
+            key.SetValue(SpotlightOverlayValue, 0, RegistryValueKind.DWord);
+            key.SetValue(FunFactsValue, 0, RegistryValueKind.DWord);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            AppLog.Write("lock", $"Could not hide the lock screen's tips: {exception.Message}");
+        }
     }
 
     /// <summary>Saves the picture for a video and returns its path, or null if there's no good one.</summary>
@@ -301,12 +321,13 @@ internal sealed class LockScreenArtwork : IDisposable
             var original = CurrentPicturePath();
             var copy = await CopyCurrentPictureAsync(original).ConfigureAwait(false);
 
-            int? spotlight, overlay;
+            int? spotlight, overlay, funFacts;
             var subscriptions = new Dictionary<string, string>();
             using (var key = Registry.CurrentUser.OpenSubKey(SpotlightKey))
             {
                 spotlight = key?.GetValue(SpotlightEnabledValue) as int?;
                 overlay = key?.GetValue(SpotlightOverlayValue) as int?;
+                funFacts = key?.GetValue(FunFactsValue) as int?;
             }
             using (var key = Registry.CurrentUser.OpenSubKey(SubscriptionsKey))
             {
@@ -324,7 +345,7 @@ internal sealed class LockScreenArtwork : IDisposable
             // A plain picture can only come back from a copy; don't go on without one.
             if (copy == null && spotlight != 1 && slideshow != 1) return false;
 
-            var backup = new LockScreenBackup(original, copy, spotlight, overlay, slideshow, subscriptions);
+            var backup = new LockScreenBackup(original, copy, spotlight, overlay, slideshow, subscriptions, funFacts, FunFactsRecorded: true);
             var temporary = BackupFile + ".tmp";
             await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(backup)).ConfigureAwait(false);
             File.Move(temporary, BackupFile, overwrite: true);
@@ -387,16 +408,18 @@ internal sealed class LockScreenArtwork : IDisposable
         if (!File.Exists(BackupFile)) return;
         try
         {
-            // The picture isn't CastDesk's: the user chose another in Windows Settings during playback, so keep theirs.
+            var backup = JsonSerializer.Deserialize<LockScreenBackup>(await File.ReadAllTextAsync(BackupFile).ConfigureAwait(false));
+            if (backup == null) throw new InvalidDataException("The backup is empty.");
+
+            // The picture isn't CastDesk's: the user chose another in Windows Settings during playback, so keep theirs,
+            // with the tips switched back to how they had them.
             if (OtherPictureIsSet())
             {
+                using (var key = Registry.CurrentUser.CreateSubKey(SpotlightKey)) RestoreTips(key, backup);
                 AppLog.Write("lock", "The lock screen was changed during playback; keeping that.");
                 DeleteOurFiles();
                 return;
             }
-
-            var backup = JsonSerializer.Deserialize<LockScreenBackup>(await File.ReadAllTextAsync(BackupFile).ConfigureAwait(false));
-            if (backup == null) throw new InvalidDataException("The backup is empty.");
 
             // The picture first: setting one turns Spotlight and slideshow off, and the values below turn them back on.
             var picture = backup.Picture != null && File.Exists(backup.Picture) ? backup.Picture
@@ -410,7 +433,7 @@ internal sealed class LockScreenArtwork : IDisposable
             using (var key = Registry.CurrentUser.CreateSubKey(SpotlightKey))
             {
                 if (backup.Spotlight is { } spotlight) key.SetValue(SpotlightEnabledValue, spotlight, RegistryValueKind.DWord);
-                if (backup.SpotlightOverlay is { } overlay) key.SetValue(SpotlightOverlayValue, overlay, RegistryValueKind.DWord);
+                RestoreTips(key, backup);
             }
             foreach (var (name, context) in backup.Subscriptions ?? [])
             {
@@ -430,6 +453,19 @@ internal sealed class LockScreenArtwork : IDisposable
         {
             AppLog.Write("lock", $"Could not restore the lock screen, will try again: {exception.Message}");
         }
+    }
+
+    /// <summary>Undoes <see cref="HideTips"/>: a value that wasn't there before is removed again.</summary>
+    private static void RestoreTips(RegistryKey key, LockScreenBackup backup)
+    {
+        SetOrDelete(key, SpotlightOverlayValue, backup.SpotlightOverlay);
+        if (backup.FunFactsRecorded) SetOrDelete(key, FunFactsValue, backup.FunFacts);
+    }
+
+    private static void SetOrDelete(RegistryKey key, string name, int? value)
+    {
+        if (value is { } number) key.SetValue(name, number, RegistryValueKind.DWord);
+        else key.DeleteValue(name, throwOnMissingValue: false);
     }
 
     private static bool OtherPictureIsSet()
@@ -866,6 +902,8 @@ internal sealed class LockScreenArtwork : IDisposable
     /// <param name="SpotlightOverlay">Spotlight's "fun facts and tips" switch, or null if it wasn't set.</param>
     /// <param name="Slideshow">The slideshow switch (1 = on), or null if it wasn't set.</param>
     /// <param name="Subscriptions">Spotlight's content subscriptions and their modes.</param>
+    /// <param name="FunFacts">The fun facts subscription switch, or null if it wasn't set.</param>
+    /// <param name="FunFactsRecorded">False in backups from 2.1.5, which didn't record <paramref name="FunFacts"/>.</param>
     private sealed record LockScreenBackup(string? Picture, string? PictureCopy, int? Spotlight, int? SpotlightOverlay, int? Slideshow,
-        Dictionary<string, string>? Subscriptions);
+        Dictionary<string, string>? Subscriptions, int? FunFacts = null, bool FunFactsRecorded = false);
 }

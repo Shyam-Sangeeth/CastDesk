@@ -86,11 +86,15 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
   To check the look without touching the lock screen, call `ComposePicture` / `ComposeFilledPicture` by reflection
   from a throwaway console program on downloaded thumbnails.
   Set as playback starts, not on lock: `LockScreen.SetImageFileAsync` takes ~0.8 s, so setting it on lock showed
-  Spotlight first. It needs no admin rights and turns off Spotlight (`RotatingLockScreenEnabled`), so
-  `LockScreen\backup.json` saves the picture and the switches first; restored 5 s after playback stops, or at the next
+  Spotlight first. It needs no admin rights and turns off Spotlight (`RotatingLockScreenEnabled`), but Picture mode
+  inherits Spotlight's "fun facts, tips" switch, which put "Learn more about this picture" links over the thumbnail
+  (the user's report), so `HideTips` turns it off (`RotatingLockScreenOverlayEnabled` and
+  `SubscribedContent-338387Enabled`, as Settings does). `LockScreen\backup.json` saves the picture and the switches
+  first; restored 5 s after playback stops, or at the next
   start after a crash. Windows reads the Spotlight switch only as the lock screen starts: stopped while locked, the
   underlying picture shows until the next lock (the user chose that over keeping the stopped song's thumbnail).
-  Tested on the user's PC 2026-11-09 for Spotlight and Picture; restoring a slideshow is untested. Testing changes
+  Tested on the user's PC 2026-11-09 for Spotlight and Picture (and `HideTips`: links gone, both values back
+  afterwards); restoring a slideshow is untested. Testing changes
   the user's real lock screen: back up the registry keys and leave Spotlight as it was.
 - `Configuration/` (`CastDeskOptions` = `%LOCALAPPDATA%\CastDesk\settings.json`, `DeviceIdentity`,
   `StartupRegistration`), `UI/SettingsForm.cs` (two columns, so it fits 1080p at 150%; keep it from growing taller),
@@ -150,7 +154,8 @@ Releases: v2.0.0 (first, no updater), v2.1.0 (updater), v2.1.1 (shortcut app ID,
 playing in the tray, other videos pause and reopen the window; previews stop while minimized), v2.1.4 (Discord
 status, on by default), v2.1.5 (PR #2 from Niranjen99: lock screen thumbnail, on by default with two looks, and the
 phone-disconnect setting; the DIAL server refuses web pages; WebView2 closed after 5 minutes in the tray; crash and
-log fixes from a full review). The updater
+log fixes from a full review), v2.1.6 (Spotlight's "Learn more about this picture" links hidden over the lock screen
+thumbnail; README pictures of both looks). The updater
 worked end to end on the user's PC for 2.1.0 → 2.1.1 (2026-11-07): download and SHA-256 check, `msiexec /passive`,
 CastDesk back up 7 s later.
 
@@ -169,7 +174,8 @@ publish only when the user asks.
 ## Docs
 
 - README screenshots are in `docs/screenshots`: retake them with `tools/readme-shots` when the UI changes. The player
-  window isn't screenshotted (opening the TV app plays sound).
+  window isn't screenshotted (opening the TV app plays sound). The lock screen pictures come from `ComposePicture` /
+  `ComposeFilledPicture` on a cover the tool draws itself: keep real thumbnails (copyrighted) out of the repo.
 - Write user-facing text and docs in plain, specific English.
 - `PRIVACY.md` and `TERMS.md` are linked from CastDesk's Discord application (Developer Portal). Keep their paths, and
   update `PRIVACY.md` (and its date) whenever CastDesk starts connecting to something new or storing something new.
