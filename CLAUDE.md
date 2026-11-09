@@ -29,7 +29,8 @@ To check page-bridge.js without stopping the installed copy or making sound, use
 CDP `Network.setUserAgentOverride` (the `--user-agent` switch alone gets the desktop site), `Page.enable`, then
 `Page.addScriptToEvaluateOnNewDocument` with a stub `window.chrome.webview` (`postMessage` into an array) followed by
 the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is fine. Bringing another tab to the front
-(`Target.activateTarget`) makes the page really hidden, for testing the visibility handling.
+(`Target.activateTarget`) makes the page really hidden, for testing the visibility handling. `node tools/check-bridge.js`
+does this setup and prints the lounge name and `deviceInfo` the TV app sends, plus the bridge's messages.
 
 ## Layout
 
