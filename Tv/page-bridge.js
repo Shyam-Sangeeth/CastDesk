@@ -4,12 +4,14 @@
 //   - keeps the page "visible" while a video is open and the window is minimized or closed to the tray, so the
 //     TV app keeps playing (home-screen previews still stop);
 //   - answers the TV app's format questions as a TV would, so it offers qualities above 720p;
+//   - reports how many phones are connected to the TV app (their disconnect never reaches CastDesk over DIAL);
 //   - catches F11 and Alt+Enter (WebView2 keeps keys to itself, so CastDesk's window never sees them);
 //   - shows Back (top-left) and Fullscreen (top-right) buttons while the mouse moves.
 //
 //   to CastDesk:   {"type":"media","hasVideo":true,"playing":true,"title":"…","artist":"…","artwork":"https://…",
 //                   "hasNext":true,"hasPrevious":false,"watching":true,"music":false,"videoId":"dQw4w9WgXcQ",
 //                   "startedAt":1762600000000,"endsAt":1762600213000}   (Unix ms; 0 when paused or unknown)
+//                  {"type":"phones","connected":1}       phones connected to the TV app, when that changes
 //                  {"type":"fullscreen"}                 toggle fullscreen (key or button)
 //                  {"type":"back"}                       the Back button: CastDesk presses Esc
 //   from CastDesk: "play" | "pause" | "togglePlay" | "nexttrack" | "previoustrack"
@@ -178,6 +180,57 @@
     });
   };
 
+
+  // ---------- Who is connected ----------
+
+  // "Disconnect from TV" on the phone sends nothing to CastDesk's DIAL server. It reaches the TV app over
+  // YouTube's own connection (the "lounge"), a long-running request answered with one message per line:
+  //   [[12,["loungeStatus",{"devices":"[{\"type\":\"LOUNGE_SCREEN\",…},{\"type\":\"REMOTE_CONTROL\",…}]",…}]]
+  // Each loungeStatus lists everything connected: this TV, and a REMOTE_CONTROL per phone. Counting those
+  // means one of two phones leaving doesn't look like the last one leaving. Only the device types are read.
+  let phonesConnected = 0;
+  const readLoungeMessage = (line) => {
+    const match = /^(?:\[|,)(\[\d+,\[.*\])$/.exec(line);
+    if (!match || !match[1].includes('"loungeStatus"')) return;
+    // A message that ends its chunk carries the chunk's closing bracket too.
+    for (const candidate of [match[1], match[1].slice(0, -1)]) {
+      try {
+        const [, [name, data]] = JSON.parse(candidate);
+        if (name !== 'loungeStatus' || !data || typeof data.devices !== 'string') return;
+        const phones = JSON.parse(data.devices).filter((device) => device.type === 'REMOTE_CONTROL').length;
+        if (phones !== phonesConnected) {
+          phonesConnected = phones;
+          post({ type: 'phones', connected: phones });
+        }
+        return;
+      } catch { /* try the other form */ }
+    }
+  };
+  const xhrOpen = XMLHttpRequest.prototype.open;
+  const xhrSend = XMLHttpRequest.prototype.send;
+  const loungeRequests = new WeakSet();
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    if (String(url).includes('/api/lounge/bc/bind')) loungeRequests.add(this);
+    return xhrOpen.call(this, method, url, ...rest);
+  };
+  XMLHttpRequest.prototype.send = function (...args) {
+    if (loungeRequests.has(this)) {
+      let seen = 0;
+      const read = () => {
+        try {
+          // Up to the last complete line: the rest of a long message may still be on its way.
+          const text = this.responseText || '';
+          const end = text.lastIndexOf('\n');
+          if (end < seen) return;
+          text.slice(seen, end).split('\n').forEach(readLoungeMessage);
+          seen = end + 1;
+        } catch { /* not readable as text */ }
+      };
+      this.addEventListener('progress', read);
+      this.addEventListener('load', read);
+    }
+    return xhrSend.apply(this, args);
+  };
 
   // ---------- Fullscreen keys ----------
 

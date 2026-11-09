@@ -97,6 +97,9 @@ internal sealed class TvAppView : UserControl
     /// <summary>What the TV app is playing changed. Raised on the UI thread.</summary>
     public event EventHandler<MediaState>? MediaStateChanged;
 
+    /// <summary>The number of phones connected to the TV app changed. Raised on the UI thread.</summary>
+    public event EventHandler<int>? ConnectedPhonesChanged;
+
     /// <summary>Sends "play", "pause", "togglePlay", "nexttrack" or "previoustrack" to the TV app.</summary>
     public void SendMediaCommand(string command) => PostToPage(command);
 
@@ -144,6 +147,12 @@ internal sealed class TvAppView : UserControl
             if (type.GetString() == "back")
             {
                 _ = PressBackAsync();
+                return;
+            }
+            if (type.GetString() == "phones")
+            {
+                if (root.TryGetProperty("connected", out var connected) && connected.TryGetInt32(out var phones))
+                    ConnectedPhonesChanged?.Invoke(this, phones);
                 return;
             }
             if (type.GetString() != "media") return;

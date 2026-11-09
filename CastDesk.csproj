@@ -11,7 +11,7 @@
     <AssemblyName>CastDesk</AssemblyName>
     <RootNamespace>CastDesk</RootNamespace>
     <!-- App and installer version (installer\build-installer.ps1 can override it). -->
-    <Version>2.1.4</Version>
+    <Version>2.1.5</Version>
     <Product>CastDesk</Product>
     <Company>Shyam Sangeeth</Company>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>

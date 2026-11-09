@@ -48,6 +48,9 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
   (`width=99999`): Chromium says yes to them, and the TV app then stops at 720p. Its media report includes
   `watching` and `music` (`getPlayerResponse().videoDetails.musicVideoType` on `#ytlr-player__player-container-player`;
   the TV app gets its player data through encrypted `initplayback`, so it can't be read from the network).
+  It also counts connected phones, for `KeepPlayingWhenPhoneDisconnects` (on by default): "Disconnect from TV" sends
+  no DIAL `DELETE`, and the phone keeps polling `GET /apps/YouTube`, so the signal is the lounge's `loungeStatus`
+  message on `/api/lounge/bc/bind` (its `devices` JSON has one `REMOTE_CONTROL` per phone; recorded 2026-11-09).
 - `MainForm.cs`: window, tray menu, fullscreen. The close button (`CloseToTray`) keeps the TV app loaded on a video
   page: music keeps playing, other videos are paused, and the window comes back when a non-music video plays again.
   Elsewhere it unloads the TV app (`HideToTray`, also used when casting stops) so nothing plays hidden.
@@ -65,6 +68,16 @@ the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is f
   process's window: send the WebView2 browser process (`TvAppView.BrowserProcessId`, windowless), never CastDesk's
   own ID (with it, the overlay appeared over the player; confirmed gone on the user's PC on 2026-11-08).
   Testing it changes the user's real Discord status: keep tests short and clear it afterwards.
+- `Media/LockScreenArtwork.cs`: the thumbnail as the lock screen picture while playing (`ShowOnLockScreen`, off by
+  default). Set as playback starts, not on lock: `LockScreen.SetImageFileAsync` takes ~0.8 s, so setting it on lock
+  showed Spotlight first. It needs no admin rights and turns off Spotlight (`RotatingLockScreenEnabled`), so
+  `LockScreen\backup.json` saves the picture and the switches first; restored 5 s after playback stops, or at the next
+  start after a crash. Windows reads the Spotlight switch only as the lock screen starts: stopped while locked, the
+  underlying picture shows until the next lock (the user chose that over keeping the stopped song's thumbnail). Art
+  under 600 px on its shorter side is skipped at the user's request. Tested on the user's PC 2026-11-09 for Spotlight
+  and Picture; restoring a slideshow is untested. To test silently, compile this file into a throwaway console
+  program and pass it fake `MediaState`s (`AppLog` can't write while the installed copy holds the log). Testing changes
+  the user's real lock screen: back up the registry keys and leave Spotlight as it was.
 - `Configuration/` (`CastDeskOptions` = `%LOCALAPPDATA%\CastDesk\settings.json`, `DeviceIdentity`,
   `StartupRegistration`), `UI/SettingsForm.cs` (two columns, so it fits 1080p at 150%; keep it from growing taller),
   `Diagnostics/AppLog.cs`.

@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     private const int PauseTimeoutMilliseconds = 3000;
     private const int VideoPlayingInTrayMilliseconds = 1500;
     private const int LeftVideoPageMilliseconds = 3000;
+    private const int PhoneGoneMilliseconds = 5000; // so a phone that reconnects straight away doesn't stop the video
 
     private readonly CastDeskController _controller;
     private readonly TvAppView _tvApp;
@@ -30,8 +31,10 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem _statusMenuItem;
     private readonly System.Windows.Forms.Timer _hideAfterStopTimer;
     private readonly System.Windows.Forms.Timer _updateCheckTimer;
+    private readonly System.Windows.Forms.Timer _phoneGoneTimer;
     private readonly AudioSessionRenamer _audioSessionRenamer;
     private readonly DiscordPresence _discord;
+    private readonly LockScreenArtwork _lockScreen;
     private WindowsMediaControls? _mediaControls;
     private CastDeskOptions _options;
     private SettingsForm? _settingsForm;
@@ -69,6 +72,7 @@ public sealed class MainForm : Form
 
         _tvApp = new TvAppView { Dock = DockStyle.Fill };
         _discord = new DiscordPresence(() => _tvApp.BrowserProcessId) { Enabled = options.ShowInDiscord };
+        _lockScreen = new LockScreenArtwork(options.ShowOnLockScreen);
         _tvApp.ScreenInfoReported += (_, details) => _controller.ReportScreenInfo(details);
         _tvApp.ExitRequested += (_, _) =>
         {
@@ -80,7 +84,14 @@ public sealed class MainForm : Form
             _mediaState = state;
             _mediaControls?.Show(state);
             _discord.Show(state);
+            _lockScreen.Show(state);
             if (_inTrayWithVideo) OnMediaStateInTray(state);
+        };
+        _tvApp.ConnectedPhonesChanged += (_, phones) =>
+        {
+            AppLog.Write("tv", $"Phones connected: {phones}.");
+            if (phones > 0) _phoneGoneTimer!.Stop();
+            else _phoneGoneTimer!.Start();
         };
         _tvApp.FullscreenToggleRequested += (_, _) => ToggleFullscreen();
         _tvApp.PageFullscreenChanged += (_, isFullscreen) =>
@@ -140,17 +151,17 @@ public sealed class MainForm : Form
             HideToTray();
         };
 
-        _controller.StopRequested += (_, _) =>
+        _phoneGoneTimer = new System.Windows.Forms.Timer { Interval = PhoneGoneMilliseconds };
+        _phoneGoneTimer.Tick += (_, _) =>
         {
-            if (_inTrayWithVideo)
-            {
-                // Unload rather than open the home screen, whose previews would play in the tray.
-                HideToTray();
-                return;
-            }
-            _tvApp.GoHome();
-            if (_options.HideWhenCastingStops) _hideAfterStopTimer.Start();
+            _phoneGoneTimer.Stop();
+            if (_options.KeepPlayingWhenPhoneDisconnects) return;
+            AppLog.Write("tv", "The last phone disconnected; stopping.");
+            _controller.ReportTvAppStopped(); // the phone's next cast launches the TV app again
+            StopCasting();
         };
+
+        _controller.StopRequested += (_, _) => StopCasting();
         _controller.ReceiverStatusChanged += (_, status) => SetReceiverStatus(status);
 
         // A notification about a new version opens Settings, where it can be installed.
@@ -165,6 +176,19 @@ public sealed class MainForm : Form
         ResumeLayout(performLayout: false);
         _controller.Start();
         if (_options.CheckForUpdates) _updateCheckTimer.Start();
+    }
+
+    /// <summary>A phone asked to stop, or the last one left: back to the home screen, then hide if the settings say so.</summary>
+    private void StopCasting()
+    {
+        if (_inTrayWithVideo)
+        {
+            // Unload rather than open the home screen, whose previews would play in the tray.
+            HideToTray();
+            return;
+        }
+        _tvApp.GoHome();
+        if (_options.HideWhenCastingStops) _hideAfterStopTimer.Start();
     }
 
     /// <summary>
@@ -287,6 +311,7 @@ public sealed class MainForm : Form
         _tvApp.Unload();
         _mediaControls?.Show(MediaState.Nothing);
         _discord.Show(MediaState.Nothing);
+        _lockScreen.Show(MediaState.Nothing);
         _controller.ReportTvAppStopped(); // the phone's next cast launches the TV app again
     }
 
@@ -462,6 +487,7 @@ public sealed class MainForm : Form
             _options = updated;
             _controller.ApplyOptions(updated);
             _discord.Enabled = updated.ShowInDiscord;
+            _lockScreen.Enabled = updated.ShowOnLockScreen;
             if (userAgentChanged) _tvApp.ChangeUserAgent(updated.EffectiveUserAgent);
 
             if (problems.Count > 0)
@@ -505,11 +531,13 @@ public sealed class MainForm : Form
         {
             _hideAfterStopTimer.Dispose();
             _updateCheckTimer.Dispose();
+            _phoneGoneTimer.Dispose();
             _pauseTimeoutTimer.Dispose();
             _videoPlayingInTrayTimer.Dispose();
             _leftVideoPageTimer.Dispose();
             _audioSessionRenamer.Dispose();
             _discord.Dispose(); // closing the connection clears the Discord status
+            _lockScreen.Dispose(); // puts the user's lock screen back
             _trayIcon.ContextMenuStrip?.Dispose();
             _trayIcon.Dispose();
         }

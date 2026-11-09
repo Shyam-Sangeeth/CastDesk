@@ -17,6 +17,7 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _nameBox = new() { Width = FieldWidth, MaxLength = CastDeskOptions.MaxFriendlyNameLength };
     private readonly CheckBox _fullscreenOnCastBox = new() { Text = "Go fullscreen when a cast starts", AutoSize = true };
     private readonly CheckBox _hideWhenStoppedBox = new() { Text = "Hide the window when casting stops", AutoSize = true };
+    private readonly CheckBox _keepPlayingBox = new() { Text = "Keep playing when my phone disconnects", AutoSize = true };
     private readonly CheckBox _startWithWindowsBox = new() { Text = "Start CastDesk when I sign in to Windows", AutoSize = true };
     private readonly NumericUpDown _portBox = new() { Minimum = CastDeskOptions.MinimumPort, Maximum = CastDeskOptions.MaximumPort, Width = 100 };
     private readonly TextBox _userAgentBox = new() { Width = FieldWidth, Height = 76, Multiline = true, ScrollBars = ScrollBars.Vertical, WordWrap = true };
@@ -28,6 +29,7 @@ internal sealed class SettingsForm : Form
     private readonly ProgressBar _downloadProgress = new() { Width = FieldWidth, Height = 12, Visible = false, Margin = new Padding(0, 6, 0, 2) };
     private readonly CheckBox _autoCheckUpdatesBox = new() { Text = "Check for updates automatically", AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
     private readonly CheckBox _showInDiscordBox = new() { Text = "Show what I'm playing in Discord", AutoSize = true };
+    private readonly CheckBox _showOnLockScreenBox = new() { Text = "Show the thumbnail on the lock screen", AutoSize = true };
 
     private readonly CastDeskOptions _original;
     private CancellationTokenSource? _downloadCancel;
@@ -64,6 +66,9 @@ internal sealed class SettingsForm : Form
         left.Controls.Add(Heading("Window"));
         left.Controls.Add(_fullscreenOnCastBox);
         left.Controls.Add(_hideWhenStoppedBox);
+        left.Controls.Add(_keepPlayingBox);
+        left.Controls.Add(Hint("Turn this off only if you cast from YouTube Music. In the YouTube app, tapping a new video " +
+            "disconnects the phone, so the cast would stop too."));
 
         left.Controls.Add(Heading("Startup"));
         left.Controls.Add(_startWithWindowsBox);
@@ -89,6 +94,11 @@ internal sealed class SettingsForm : Form
         right.Controls.Add(Hint("Your Discord status shows the title, channel and thumbnail while a video or song plays. " +
             "Needs the Discord app running on this PC."));
 
+        right.Controls.Add(Heading("Lock screen"));
+        right.Controls.Add(_showOnLockScreenBox);
+        right.Controls.Add(Hint("While a video or song plays, its thumbnail is your lock screen picture, if YouTube has a " +
+            "sharp one. Your own lock screen comes back when playback stops."));
+
         right.Controls.Add(Heading("Advanced"));
         right.Controls.Add(Label("Port phones connect to"));
         right.Controls.Add(_portBox);
@@ -113,11 +123,13 @@ internal sealed class SettingsForm : Form
         _nameBox.Text = current.FriendlyName;
         _fullscreenOnCastBox.Checked = current.FullscreenOnCast;
         _hideWhenStoppedBox.Checked = current.HideWhenCastingStops;
+        _keepPlayingBox.Checked = current.KeepPlayingWhenPhoneDisconnects;
         _startWithWindowsBox.Checked = startsWithWindows;
         _portBox.Value = Math.Clamp(current.DialPort, CastDeskOptions.MinimumPort, CastDeskOptions.MaximumPort);
         _userAgentBox.Text = current.EffectiveUserAgent;
         _autoCheckUpdatesBox.Checked = current.CheckForUpdates;
         _showInDiscordBox.Checked = current.ShowInDiscord;
+        _showOnLockScreenBox.Checked = current.ShowOnLockScreen;
         ShowUpdateState(FoundUpdate == null
             ? $"You have CastDesk {UpdateService.CurrentVersion}."
             : $"CastDesk {FoundUpdate.Version} is available (you have {UpdateService.CurrentVersion}).");
@@ -272,8 +284,10 @@ internal sealed class SettingsForm : Form
         result.FriendlyName = name;
         result.FullscreenOnCast = _fullscreenOnCastBox.Checked;
         result.HideWhenCastingStops = _hideWhenStoppedBox.Checked;
+        result.KeepPlayingWhenPhoneDisconnects = _keepPlayingBox.Checked;
         result.CheckForUpdates = _autoCheckUpdatesBox.Checked;
         result.ShowInDiscord = _showInDiscordBox.Checked;
+        result.ShowOnLockScreen = _showOnLockScreenBox.Checked;
         result.DialPort = (int)_portBox.Value;
         // Store an empty value for the default, so a future CastDesk with a newer default picks it up.
         var userAgent = _userAgentBox.Text.Trim();

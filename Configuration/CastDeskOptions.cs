@@ -38,6 +38,12 @@ public sealed class CastDeskOptions
     /// <summary>Hide the window to the tray a few seconds after the phone stops casting.</summary>
     public bool HideWhenCastingStops { get; set; } = true;
 
+    /// <summary>
+    /// Keep playing when the last phone disconnects, as CastDesk always has. Off, the player stops as it does
+    /// when the phone asks it to stop.
+    /// </summary>
+    public bool KeepPlayingWhenPhoneDisconnects { get; set; } = true;
+
     /// <summary>Check GitHub for a newer release shortly after CastDesk starts, and offer it in a notification.</summary>
     public bool CheckForUpdates { get; set; } = true;
 
@@ -47,6 +53,12 @@ public sealed class CastDeskOptions
     /// friends, so Settings and the README say so.
     /// </summary>
     public bool ShowInDiscord { get; set; } = true;
+
+    /// <summary>
+    /// While a video plays, make its thumbnail the lock screen picture. Off by default: it changes a Windows
+    /// setting for a while and shows what's playing to anyone who can see the locked screen.
+    /// </summary>
+    public bool ShowOnLockScreen { get; set; }
 
     /// <summary>
     /// A Chromecast with Google TV running YouTube's TV engine (Cobalt). youtube.com/tv only serves its TV
