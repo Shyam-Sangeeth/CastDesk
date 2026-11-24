@@ -23,6 +23,7 @@ internal sealed class TvAppView : UserControl
     private string _screenInfoUrl = "";
     private string _screenName = CastDeskOptions.DefaultFriendlyName;
     private string? _screenNameScriptId;
+    private bool _keepPlaying = true;
 
     public TvAppView()
     {
@@ -81,17 +82,38 @@ internal sealed class TvAppView : UserControl
         {
             var core = _webView.CoreWebView2;
             if (_screenNameScriptId != null) core.RemoveScriptToExecuteOnDocumentCreated(_screenNameScriptId);
-            _screenNameScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(ScreenNameScript(_screenName));
+            var script = ScreenNameScript();
+            _screenNameScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(script);
+            // The open page reads "Keep playing" when a phone leaves, so tell it now too (the name is only read
+            // as the TV app connects, which is why that one waits for the next time it opens).
+            await core.ExecuteScriptAsync($"window.__castDeskKeepPlaying = {(_keepPlaying ? "true" : "false")};");
         }
         catch (Exception exception)
         {
-            AppLog.Write("tv", $"Could not change the name phones see: {exception.Message}");
+            AppLog.Write("tv", $"Could not update the TV app's settings: {exception.Message}");
         }
     }
 
-    /// <summary>Read by page-bridge.js when the TV app connects to YouTube's lounge.</summary>
-    private static string ScreenNameScript(string name) =>
-        $"window.__castDeskScreenName = {System.Text.Json.JsonSerializer.Serialize(name)};";
+    /// <summary>
+    /// With "Keep playing when my phone disconnects" on, page-bridge.js opens the video again if the TV app closes it
+    /// as the last phone leaves. Takes effect at once.
+    /// </summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public bool KeepPlayingWhenPhonesLeave
+    {
+        get => _keepPlaying;
+        set
+        {
+            if (value == _keepPlaying) return;
+            _keepPlaying = value;
+            if (IsReady && _initialization is { IsCompleted: true }) _ = ReplaceScreenNameScriptAsync();
+        }
+    }
+
+    /// <summary>Read by page-bridge.js: the name when the TV app connects to YouTube's lounge, and "Keep playing".</summary>
+    private string ScreenNameScript() =>
+        $"window.__castDeskScreenName = {System.Text.Json.JsonSerializer.Serialize(_screenName)}; " +
+        $"window.__castDeskKeepPlaying = {(_keepPlaying ? "true" : "false")};";
 
     /// <summary>
     /// Creates the browser (once); it stays empty until a launch or <see cref="ShowHomeIfEmptyAsync"/>.
@@ -148,7 +170,7 @@ internal sealed class TvAppView : UserControl
         {
             if (!e.IsSuccess) AppLog.Write("tv", $"Navigation failed: {e.WebErrorStatus}");
         };
-        _screenNameScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(ScreenNameScript(_screenName));
+        _screenNameScriptId = await core.AddScriptToExecuteOnDocumentCreatedAsync(ScreenNameScript());
         await core.AddScriptToExecuteOnDocumentCreatedAsync(LoadMediaSessionBridge());
         core.WebMessageReceived += OnWebMessageReceived;
         core.ContainsFullScreenElementChanged += (_, _) => PageFullscreenChanged?.Invoke(this, core.ContainsFullScreenElement);
@@ -199,6 +221,23 @@ internal sealed class TvAppView : UserControl
         }
     }
 
+    /// <summary>Shows a video's like and dislike counts under the TV app's buttons; null shows none.</summary>
+    public void ShowVoteCounts(Media.VideoVotes? votes)
+    {
+        if (!IsReady) return;
+        var message = votes == null
+            ? """{"type":"votes"}"""
+            : System.Text.Json.JsonSerializer.Serialize(new { type = "votes", videoId = votes.VideoId, likes = votes.Likes, dislikes = votes.Dislikes });
+        try
+        {
+            _webView.CoreWebView2.PostWebMessageAsJson(message);
+        }
+        catch (Exception exception) // the page may be between loads
+        {
+            AppLog.Write("tv", $"Could not pass the vote counts to the TV app: {exception.Message}");
+        }
+    }
+
     private void PostToPage(string message)
     {
         if (IsReady) _webView.CoreWebView2.PostWebMessageAsString(message);
@@ -225,6 +264,12 @@ internal sealed class TvAppView : UserControl
             {
                 if (root.TryGetProperty("connected", out var connected) && connected.TryGetInt32(out var phones))
                     ConnectedPhonesChanged?.Invoke(this, phones);
+                return;
+            }
+            if (type.GetString() == "reopening")
+            {
+                var seconds = root.TryGetProperty("seconds", out var at) && at.TryGetInt32(out var value) ? value : 0;
+                AppLog.Write("tv", $"The TV app closed the video as the last phone left; opening it again at {seconds} s.");
                 return;
             }
             if (type.GetString() != "media") return;

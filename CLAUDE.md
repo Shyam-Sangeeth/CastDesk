@@ -31,6 +31,10 @@ CDP `Network.setUserAgentOverride` (the `--user-agent` switch alone gets the des
 the bridge, and open `https://www.youtube.com/tv#/watch?v=<id>`. Signed out is fine. Bringing another tab to the front
 (`Target.activateTarget`) makes the page really hidden, for testing the visibility handling. `node tools/check-bridge.js`
 does this setup and prints the lounge name and `deviceInfo` the TV app sends, plus the bridge's messages.
+`node tools/check-disconnect.js` adds an emulated phone (a lounge `REMOTE_CONTROL`, from the test TV's screen ID)
+that plays a video and disconnects: use it to test phone connects and disconnects without the user's phone.
+Headless Edge needs `--autoplay-policy=no-user-gesture-required` to play, and signed out, videos often start with
+an ad (the player reports state -1 and plays the ad from 0 s, and a `seekTo` waits for the ad to end).
 
 ## Layout
 
@@ -52,12 +56,24 @@ does this setup and prints the lounge name and `deviceInfo` the TV app sends, pl
   It also counts connected phones, for `KeepPlayingWhenPhoneDisconnects` (on by default): "Disconnect from TV" sends
   no DIAL `DELETE`, and the phone keeps polling `GET /apps/YouTube`, so the signal is the lounge's `loungeStatus`
   message on `/api/lounge/bc/bind` (its `devices` JSON has one `REMOTE_CONTROL` per phone; recorded 2026-11-09).
+  When a phone with `pairingType` "manual" (reconnected through its saved link) leaves, the TV app closes the video
+  and goes to `#/` by itself, with no command from YouTube; one that cast ("dial") can leave with the video still
+  playing (recorded 2026-11-10 with the user's phone). With Keep playing on (`window.__castDeskKeepPlaying`, set by
+  `TvAppView.KeepPlayingWhenPhonesLeave`), the bridge notes the video and position as the last phone leaves and, if
+  the TV app leaves `#/watch` within 5 s, loads `/tv#/watch?v=<id>&t=<s>s` afresh: changing the address in the
+  running app opens the video at 0:00 and its player ignores `seekTo`. The launch query (the phone's pairing code)
+  is left out of that address.
   It also puts the Cast menu name into the TV app's lounge requests (`name`, `screen_name`, `deviceInfo.model`;
   `TvAppView.ScreenName` sets `window.__castDeskScreenName` in a separate document script): otherwise phones that
   join over the lounge (a second phone, Link with TV code) show "YouTube on TV" / "Sabrina", the TV identity's model.
 - `MainForm.cs`: window, tray menu, fullscreen. The close button (`CloseToTray`) keeps the TV app loaded on a video
   page: music keeps playing, other videos are paused, and the window comes back when a non-music video plays again.
-  Elsewhere it unloads the TV app (`HideToTray`, also used when casting stops) so nothing plays hidden. After 5
+  Elsewhere it unloads the TV app (`HideToTray`, also used when casting stops) so nothing plays hidden.
+  With `KeepPlayingWhenPhoneDisconnects` off, a cast that ends (DIAL `DELETE`, or 5 s after the last phone
+  leaves) sends a window the cast opened from the tray (`_openedByCast`) straight back to the tray, and leaves one
+  the user opened with Show Player open on the home screen. With it on (the default), the window always stays
+  open: a disconnect changes nothing, and a DIAL `DELETE` only goes to the home screen (2.1.7 hid it 3 s later).
+  The user's rules, 2026-11-10. After 5
   minutes unloaded in the tray, `TvAppView.ReleaseBrowser` disposes the WebView2 control (and its processes) and puts
   a new one in its place; the next cast initializes it again. The user chose this to save memory.
 - `Media/WindowsMediaControls.cs`, `Interop/` (`AudioSessionRenamer`, `AppIdentity`, `ProcessTree`, `WindowTheme`):
@@ -100,6 +116,16 @@ does this setup and prints the lounge name and `deviceInfo` the TV app sends, pl
   Tested on the user's PC 2026-11-09 for Spotlight and Picture (and `HideTips`: links gone, both values back
   afterwards); restoring a slideshow is untested. Testing changes
   the user's real lock screen: back up the registry keys and leave Spotlight as it was.
+- `Media/VoteCounts.cs`: like and dislike counts from Return YouTube Dislike (`ShowDislikes`, on by default, the
+  user's choice 2026-11-24; counts only, the user declined sending votes). `GET
+  returnyoutubedislikeapi.com/votes?videoId=` with nothing but the ID, cached 30 minutes (failures 2), raised on every
+  media report so a reloaded page gets them back; `TvAppView.ShowVoteCounts` posts `{"type":"votes",…}` as JSON.
+  RYD's terms: credit with a link (the Settings row's "Return YouTube Dislike" link, README) and at most 100 requests a
+  minute and 10,000 a day per client. The bridge writes them under `ytlr-like-button-renderer`, inside it (so they
+  scroll and fade with the controls), finding the buttons by `idomkey="like-button"` / `"dislike-button"` (aria-labels
+  are localized), in `yt.config_.HL`'s number style truncated like YouTube's ("19m", "1.8bn"; the browser's own
+  language can be en-IN, "1.9Cr"). A focused button shows its own pill in the same place (the like count, or
+  "Dislike"), so that button's count is hidden on `focusin`. Recorded 2026-11-24 with headless Edge.
 - `Configuration/` (`CastDeskOptions` = `%LOCALAPPDATA%\CastDesk\settings.json`, `DeviceIdentity`,
   `StartupRegistration`), `UI/SettingsForm.cs` (two columns, so it fits 1080p at 150%; keep it from growing taller),
   `Diagnostics/AppLog.cs` (starts a new log past 1 MB as it writes, not only at start: phones poll while connected,
@@ -160,7 +186,8 @@ status, on by default), v2.1.5 (PR #2 from Niranjen99: lock screen thumbnail, on
 phone-disconnect setting; the DIAL server refuses web pages; WebView2 closed after 5 minutes in the tray; crash and
 log fixes from a full review), v2.1.6 (Spotlight's "Learn more about this picture" links hidden over the lock screen
 thumbnail; README pictures of both looks), v2.1.7 (phones that join over the lounge show CastDesk's name, not
-"Sabrina"). The updater
+"Sabrina"), v2.1.8 (like and dislike counts from Return YouTube Dislike, on by default; Keep playing reopens a video
+the TV app closes as the phone leaves, and the window rules for casts that end). The updater
 worked end to end on the user's PC for 2.1.0 → 2.1.1 (2026-11-07): download and SHA-256 check, `msiexec /passive`,
 CastDesk back up 7 s later.
 

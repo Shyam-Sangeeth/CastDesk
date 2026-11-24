@@ -1,6 +1,6 @@
 # CastDesk privacy policy
 
-Last updated: 9 November 2026 (thumbnail on the lock screen)
+Last updated: 24 November 2026 (like and dislike counts from Return YouTube Dislike)
 
 CastDesk is a Windows app that lets the YouTube app on your phone cast to your PC. It has no servers, no accounts and
 no analytics: CastDesk itself collects nothing and sends nothing about you to its developer.
@@ -32,6 +32,11 @@ To remove all of it, uninstall CastDesk and delete that folder.
   **Check for updates**, CastDesk asks `api.github.com` for the latest release, and downloads the installer from
   GitHub if you choose to update. GitHub sees your IP address, as with any web request, under
   [GitHub's Privacy Statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
+- **Return YouTube Dislike, while the option is on.** With **Show like and dislike counts** on (it is on by default;
+  turn it off in Settings), CastDesk asks `returnyoutubedislikeapi.com` for the like and dislike counts of each
+  video you open, sending only the video's ID. It sends no account, no ID for you or your PC, and not your own likes
+  or dislikes. Return YouTube Dislike sees your IP address, as with any web request. It is an independent open-source
+  project ([returnyoutubedislike.com](https://returnyoutubedislike.com)), not part of CastDesk or YouTube.
 - **Discord, while the option is on.** With **Show what I'm playing in Discord** on (it is on by default; turn it
   off in Settings), and only while the Discord desktop app is running on your PC, CastDesk
   passes the title, channel, thumbnail link, playback time and video link of what's playing to the Discord app on

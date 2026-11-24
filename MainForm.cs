@@ -18,7 +18,6 @@ public sealed class MainForm : Form
 {
     private const string AppName = "CastDesk";
     private const int MaxTrayTextLength = 127;
-    private const int HideAfterStopMilliseconds = 3000;
     private const int UpdateCheckDelayMilliseconds = 30_000;
     private const int PauseTimeoutMilliseconds = 3000;
     private const int VideoPlayingInTrayMilliseconds = 1500;
@@ -30,13 +29,13 @@ public sealed class MainForm : Form
     private readonly TvAppView _tvApp;
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _statusMenuItem;
-    private readonly System.Windows.Forms.Timer _hideAfterStopTimer;
     private readonly System.Windows.Forms.Timer _updateCheckTimer;
     private readonly System.Windows.Forms.Timer _phoneGoneTimer;
     private readonly System.Windows.Forms.Timer _releaseBrowserTimer;
     private readonly AudioSessionRenamer _audioSessionRenamer;
     private readonly DiscordPresence _discord;
     private readonly LockScreenArtwork _lockScreen;
+    private readonly VoteCounts _voteCounts;
     private WindowsMediaControls? _mediaControls;
     private CastDeskOptions _options;
     private SettingsForm? _settingsForm;
@@ -49,6 +48,10 @@ public sealed class MainForm : Form
     private MediaState _mediaState = MediaState.Nothing;
     private bool _inTrayWithVideo;
     private bool _waitingForPause;
+
+    // Who opened the window. With "Keep playing" off, a window a cast opened from the tray goes back to the tray
+    // when the cast ends, and one the user opened (Show Player) stays open.
+    private bool _openedByCast;
 
     private bool _allowVisible;
     private bool _isExiting;
@@ -72,9 +75,16 @@ public sealed class MainForm : Form
         _options = options;
         _controller = new CastDeskController(options);
 
-        _tvApp = new TvAppView { Dock = DockStyle.Fill, ScreenName = options.FriendlyName };
+        _tvApp = new TvAppView
+        {
+            Dock = DockStyle.Fill,
+            ScreenName = options.FriendlyName,
+            KeepPlayingWhenPhonesLeave = options.KeepPlayingWhenPhoneDisconnects,
+        };
         _discord = new DiscordPresence(() => _tvApp.BrowserProcessId) { Enabled = options.ShowInDiscord };
         _lockScreen = new LockScreenArtwork(options.ShowOnLockScreen, options.LockScreenFillsScreen);
+        _voteCounts = new VoteCounts(options.ShowDislikes);
+        _voteCounts.CountsChanged += (_, votes) => _tvApp.ShowVoteCounts(votes);
         _tvApp.ScreenInfoReported += (_, details) => _controller.ReportScreenInfo(details);
         _tvApp.ExitRequested += (_, _) =>
         {
@@ -87,6 +97,7 @@ public sealed class MainForm : Form
             _mediaControls?.Show(state);
             _discord.Show(state);
             _lockScreen.Show(state);
+            _voteCounts.Show(state);
             if (_inTrayWithVideo) OnMediaStateInTray(state);
         };
         _tvApp.ConnectedPhonesChanged += (_, phones) =>
@@ -128,13 +139,6 @@ public sealed class MainForm : Form
         };
         _trayIcon.MouseClick += (_, click) => { if (click.Button == MouseButtons.Left) ShowPlayer(); };
 
-        _hideAfterStopTimer = new System.Windows.Forms.Timer { Interval = HideAfterStopMilliseconds };
-        _hideAfterStopTimer.Tick += (_, _) =>
-        {
-            _hideAfterStopTimer.Stop();
-            HideToTray();
-        };
-
         _controller.LaunchRequested += (_, launchData) => OnLaunchRequested(launchData);
         _pauseTimeoutTimer = new System.Windows.Forms.Timer { Interval = PauseTimeoutMilliseconds };
         _pauseTimeoutTimer.Tick += (_, _) => OnPauseTimedOut();
@@ -144,6 +148,7 @@ public sealed class MainForm : Form
             _videoPlayingInTrayTimer.Stop();
             AppLog.Write("tv", "A video is playing again; showing the window.");
             ShowWindow();
+            _openedByCast = true; // the user had closed it: back to the tray when the cast ends
         };
         _leftVideoPageTimer = new System.Windows.Forms.Timer { Interval = LeftVideoPageMilliseconds };
         _leftVideoPageTimer.Tick += (_, _) =>
@@ -188,7 +193,12 @@ public sealed class MainForm : Form
         if (_options.CheckForUpdates) _updateCheckTimer.Start();
     }
 
-    /// <summary>A phone asked to stop, or the last one left: back to the home screen, then hide if the settings say so.</summary>
+    /// <summary>
+    /// A phone asked to stop, or (with "Keep playing" off) the last one left. With "Keep playing" off and "Hide the
+    /// window when casting stops" on, a window a cast opened from the tray goes straight back to the tray. Otherwise
+    /// the window stays open on the home screen: one the user opened, and any window while "Keep playing" is on
+    /// (the user's rules, 2026-11-10).
+    /// </summary>
     private void StopCasting()
     {
         if (_inTrayWithVideo || !Visible)
@@ -198,8 +208,13 @@ public sealed class MainForm : Form
             HideToTray();
             return;
         }
+        if (_openedByCast && !_options.KeepPlayingWhenPhoneDisconnects && _options.HideWhenCastingStops)
+        {
+            AppLog.Write("tv", "The cast ended; back to the tray.");
+            HideToTray(); // straight away: the home screen's previews would play out loud meanwhile
+            return;
+        }
         _tvApp.GoHome();
-        if (_options.HideWhenCastingStops) _hideAfterStopTimer.Start();
     }
 
     /// <summary>
@@ -269,6 +284,8 @@ public sealed class MainForm : Form
 
     private async void OnLaunchRequested(string launchData)
     {
+        // Opened from the tray by this cast. Already open: stays as the user had it.
+        if (!Visible || _inTrayWithVideo) _openedByCast = true;
         ShowWindow();
         if (_options.FullscreenOnCast) EnterFullscreen();
         try
@@ -285,6 +302,7 @@ public sealed class MainForm : Form
     /// <summary>Shows the window and, the first time, the TV app's home screen (Show Player, tray click).</summary>
     private async void ShowPlayer()
     {
+        _openedByCast = false; // the user wants the player
         ShowWindow();
 
         // The browser is created the first time the window shows (WebView2 needs a visible window).
@@ -302,7 +320,6 @@ public sealed class MainForm : Form
 
     private void ShowWindow()
     {
-        _hideAfterStopTimer.Stop();
         _releaseBrowserTimer.Stop();
         LeaveTrayWithVideo();
         _allowVisible = true;
@@ -328,8 +345,8 @@ public sealed class MainForm : Form
     /// </summary>
     private void HideToTray()
     {
-        _hideAfterStopTimer.Stop();
         _phoneGoneTimer.Stop(); // the TV app is unloaded; a phone that left no longer matters
+        _openedByCast = false;
         LeaveTrayWithVideo();
         Hide();
         _tvApp.Unload();
@@ -357,7 +374,6 @@ public sealed class MainForm : Form
             return;
         }
 
-        _hideAfterStopTimer.Stop();
         Hide();
         _inTrayWithVideo = true;
         if (state.Music)
@@ -515,7 +531,10 @@ public sealed class MainForm : Form
             _discord.Enabled = updated.ShowInDiscord;
             _lockScreen.Enabled = updated.ShowOnLockScreen;
             _lockScreen.FillScreen = updated.LockScreenFillsScreen;
+            _voteCounts.Enabled = updated.ShowDislikes;
+            _voteCounts.Show(_mediaState); // turned on: show the open video's counts now
             _tvApp.ScreenName = updated.FriendlyName;
+            _tvApp.KeepPlayingWhenPhonesLeave = updated.KeepPlayingWhenPhoneDisconnects;
             if (userAgentChanged) _tvApp.ChangeUserAgent(updated.EffectiveUserAgent);
 
             if (problems.Count > 0)
@@ -565,7 +584,6 @@ public sealed class MainForm : Form
     {
         if (disposing)
         {
-            _hideAfterStopTimer.Dispose();
             _updateCheckTimer.Dispose();
             _phoneGoneTimer.Dispose();
             _releaseBrowserTimer.Dispose();
@@ -575,6 +593,7 @@ public sealed class MainForm : Form
             _audioSessionRenamer.Dispose();
             _discord.Dispose(); // closing the connection clears the Discord status
             _lockScreen.Dispose(); // puts the user's lock screen back
+            _voteCounts.Dispose();
             _trayIcon.ContextMenuStrip?.Dispose();
             _trayIcon.Dispose();
         }

@@ -46,7 +46,7 @@ the phone connection are all YouTube's, as on a TV.
 - **Shows up in the phone's Cast menu** as **CastDesk-*PC name*** (for example CastDesk-ARCANE), on every network
   adapter. Phones keep showing that name once connected, including a second phone that joins. The phone's
   controls work as with a TV: play, pause, seek, next, the queue, and picking another video.
-- **Starts in the tray** and comes to the front when you cast; hides again a few seconds after you stop.
+- **Starts in the tray** and comes to the front when you cast; it can go back to the tray when the cast ends.
 - **Up to 4K** (2160p, up to 60 fps), and **HDR** when HDR is on in Windows' display settings. Pick the quality in
   the TV app's player settings; Auto may choose 4K even on a smaller screen.
 - **Keeps playing while minimized**, and the phone's controls still work. Previews on the TV app's home screen
@@ -57,11 +57,13 @@ the phone connection are all YouTube's, as on a TV.
 - **Nothing else plays in the background:** closing the window on the home screen unloads the TV app, and after
   5 minutes in the tray CastDesk closes its browser too, freeing its memory. The next cast starts it again.
 - **Fullscreen** with F11, Alt+Enter or a button, and a **Back** button for the TV app.
+- **Like and dislike counts** (on by default, turn it off in Settings) under the TV app's 👍 and 👎 buttons, from
+  [Return YouTube Dislike](https://returnyoutubedislike.com). Dislikes are its estimate.
 - **Named "CastDesk" in Windows:** in the volume mixer and the media controls (with title, play/pause and next/previous),
   instead of "Microsoft Edge WebView2" and "Unknown app". Media keys work.
 - **Signed in once:** your YouTube sign-in is kept in CastDesk's own browser profile.
-- **Settings window** for the name, window behaviour, what happens when your phone disconnects, starting with
-  Windows, updates, Discord, the lock screen, the port and the TV identity.
+- **Settings window** for the name, window behaviour, like and dislike counts, what happens when your phone
+  disconnects, starting with Windows, updates, Discord, the lock screen, the port and the TV identity.
 - **Shows what's playing in Discord** (on by default, turn it off in Settings): "Listening to" for music, "Watching" for other
   videos, with the title, channel, thumbnail, time left and a link to the video.
 - **Thumbnail on the lock screen** (on by default, turn it off in Settings): while something plays, its thumbnail sits
@@ -125,8 +127,9 @@ the player or read its pairing details. Phones' YouTube apps aren't affected. Th
 ### Casting from your phone
 
 In the YouTube app on your phone, tap **Cast** and choose **CastDesk-*your PC's name***. The player window comes to the
-front and YouTube's TV app opens the video. Control it from the phone as you would a TV. When the phone stops casting,
-the window hides to the tray after 3 seconds (you can turn that off).
+front and YouTube's TV app opens the video. Control it from the phone as you would a TV. By default the window stays
+open when the cast ends. To have it go back to the tray instead, turn off **Keep playing when my phone disconnects**
+(see [Settings](#settings)).
 
 Another way to connect, without the Cast menu: in the TV app open **Settings → Link with TV code**, and on the phone
 go to **YouTube settings → Watch on TV → Enter TV code**. The phone then lists the PC under its CastDesk name too.
@@ -195,8 +198,9 @@ CastDesk. The general settings and updates are on the left, the advanced ones on
 |---|---|---|
 | Name in your phone's Cast menu | CastDesk-*PC name* | What phones list, in the Cast menu and once connected. They may show the old name for a few minutes after a change; once connected, the new name is used the next time the player opens. |
 | Go fullscreen when a cast starts | Off | Switches the window to fullscreen whenever a phone casts. |
-| Hide the window when casting stops | On | Hides the window to the tray 3 seconds after the phone stops casting. |
-| Keep playing when my phone disconnects | On | **Disconnect from TV** on the phone leaves the video playing, and your phone is free again. Turn this off to stop the player 5 seconds after the last connected phone disconnects; it then goes back to the home screen, or hides if the setting above is on. This works best with YouTube Music: in the YouTube app, tapping a new video while casting plays it on the phone and disconnects it, so the cast stops too. To keep the cast going there, use **Play next** or **Add to queue**. |
+| Show like and dislike counts from Return YouTube Dislike | On | Shows each video's like and dislike counts under the TV app's 👍 and 👎 buttons while its controls are up. They come from [Return YouTube Dislike](https://returnyoutubedislike.com) (the link opens its site); the dislikes are its estimate (see [How it works](#how-it-works)). Each video's ID is sent to it; turn this off if you'd rather it wasn't. A change applies straight away. |
+| Keep playing when my phone disconnects | On | **Disconnect from TV** on the phone leaves the video playing, and your phone is free again. If YouTube's TV app closes the video as the phone leaves (it does after the phone has reconnected), CastDesk opens it again where it was; this takes a second or two. Turn this off to stop the player 5 seconds after the last connected phone disconnects. Then, when a cast ends, a window the cast opened from the tray goes straight back to the tray (if **Hide the window when casting stops** is on), and a player you opened yourself with **Show Player** stays open on the home screen. This works best with YouTube Music: in the YouTube app, tapping a new video while casting plays it on the phone and disconnects it, so the cast stops too. To keep the cast going there, use **Play next** or **Add to queue**. |
+| Hide the window when casting stops | On | Only with **Keep playing when my phone disconnects** off: when a cast that opened the window from the tray ends, the window goes straight back to the tray. A player you opened yourself (**Show Player**) stays open. |
 | Start CastDesk when I sign in to Windows | Off (the installer offers to turn it on) | Adds CastDesk to your startup apps, starting quietly in the tray. |
 | Check for updates automatically | On | Checks for a newer release 30 seconds after CastDesk starts (see [Updates](#updates)). |
 | Show what I'm playing in Discord | On | While a video or song plays, your Discord status shows it: **Listening to** for music, **Watching** for other videos, with the title, channel, thumbnail, a progress bar and a **Listen on YouTube** or **Watch on YouTube** button. Your Discord friends see this; turn it off if you'd rather they didn't. Nothing shows while paused or on the home screen. Needs the Discord app running on this PC; CastDesk connects to it on its own (no sign-in). |
@@ -229,7 +233,7 @@ Everything CastDesk keeps is in `%LOCALAPPDATA%\CastDesk`:
 
 | File | What it holds |
 |---|---|
-| `settings.json` | The settings above: `FriendlyName`, `FullscreenOnCast`, `HideWhenCastingStops`, `KeepPlayingWhenPhoneDisconnects`, `CheckForUpdates`, `ShowInDiscord`, `ShowOnLockScreen`, `LockScreenFillsScreen`, `DialPort`, `UserAgent` (empty means the default). Missing fields keep their defaults. |
+| `settings.json` | The settings above: `FriendlyName`, `FullscreenOnCast`, `HideWhenCastingStops`, `KeepPlayingWhenPhoneDisconnects`, `ShowDislikes`, `CheckForUpdates`, `ShowInDiscord`, `ShowOnLockScreen`, `LockScreenFillsScreen`, `DialPort`, `UserAgent` (empty means the default). Missing fields keep their defaults. |
 | `device-id.txt` | The ID phones remember CastDesk by. Keep it, or phones will list CastDesk twice for a while. |
 | `WebView2\` | The TV app's browser profile, with your YouTube sign-in. Deleting it signs you out. |
 | `castdesk.log` | The log. A new one starts at 1 MB, keeping the previous one as `castdesk.log.old`. |
@@ -292,7 +296,10 @@ In the registry:
    appear over the player window.
 9. **Phones disconnecting.** **Disconnect from TV** on the phone sends CastDesk's receiver nothing, and the phone keeps
    checking in. It reaches the TV app over YouTube's own connection, which lists the phones connected to it, so
-   `page-bridge.js` counts them. That way one of two phones leaving doesn't count as the last one leaving.
+   `page-bridge.js` counts them. That way one of two phones leaving doesn't count as the last one leaving. When a
+   phone that reconnected through its saved link leaves, the TV app closes the video and goes to its home screen by
+   itself. With **Keep playing when my phone disconnects** on, the script notes the video and its position as the
+   last phone leaves, and if the TV app closes it, loads the TV app again at that video and time.
 10. **Lock screen.** An app can't draw over the lock screen, so with **Show the thumbnail on the lock screen** on,
    CastDesk replaces the lock screen picture while something plays. It does this as playback starts, not when the PC
    locks, because Windows takes about a second to apply a picture and your own lock screen would show first. It uses
@@ -312,6 +319,15 @@ In the registry:
    you see your underlying Windows picture until the next lock, when Spotlight returns. The Spotlight and slideshow
    switches aren't documented by Microsoft, so a Windows update could change them. Spotlight and plain pictures were
    tested on Windows 11; putting a slideshow back wasn't. PCs whose lock screen is set by a policy are left alone.
+11. **Like and dislike counts.** YouTube stopped showing dislike counts in 2021, and its TV app shows the like and
+   dislike buttons without numbers. With **Show like and dislike counts** on, CastDesk asks
+   [Return YouTube Dislike](https://returnyoutubedislike.com) (`returnyoutubedislikeapi.com`), the open project behind
+   the browser extension of that name, for the counts of each video you open, sending only the video's ID. The script
+   writes them under the TV app's buttons, in the TV app's language and number style. The likes are YouTube's own count;
+   the dislikes are the count YouTube showed before 2021 plus an estimate from Return YouTube Dislike's users since,
+   so treat them as a guide. Counts are kept for 30 minutes, so going back to a video doesn't ask again. While a
+   button has the TV app's focus, the TV app shows its own label there, and that button's count steps aside.
+   CastDesk only reads counts: liking or disliking in the TV app doesn't send your vote to Return YouTube Dislike.
 
 ## Troubleshooting
 
@@ -366,8 +382,9 @@ In the registry:
 ## Privacy and terms
 
 CastDesk has no servers, accounts or analytics; it keeps its settings and log on your PC. The
-[privacy policy](PRIVACY.md) lists what it connects to (your phone, YouTube, GitHub for updates, and the Discord app
-on your PC while the Discord option is on), and the [terms of service](TERMS.md) cover using it.
+[privacy policy](PRIVACY.md) lists what it connects to (your phone, YouTube, GitHub for updates, Return YouTube
+Dislike for the counts while that option is on, and the Discord app on your PC while the Discord option is on), and
+the [terms of service](TERMS.md) cover using it.
 
 ## Building from source
 
@@ -425,12 +442,13 @@ Tv/
   TvAppView.cs         YouTube's TV app in WebView2, with the TV identity
   page-bridge.js       Injected into the TV app: media state, fullscreen keys, Back and Fullscreen buttons,
                        videos playing while minimized, format answers (qualities above 720p), connected phones,
-                       CastDesk's name on YouTube's connection
+                       CastDesk's name on YouTube's connection, like and dislike counts under the buttons
   MediaState.cs        What the TV app is playing
 Media/
   WindowsMediaControls.cs  CastDesk's entry in Windows' media controls
   DiscordPresence.cs   What's playing as your Discord status (Rich Presence)
   LockScreenArtwork.cs The thumbnail as the lock screen picture, and putting yours back
+  VoteCounts.cs        Like and dislike counts from Return YouTube Dislike
 Configuration/
   CastDeskOptions.cs   settings.json loading and defaults
   DeviceIdentity.cs    The device ID phones remember

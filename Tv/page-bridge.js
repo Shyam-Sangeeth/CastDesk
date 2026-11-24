@@ -4,19 +4,25 @@
 //   - keeps the page "visible" while a video is open and the window is minimized or closed to the tray, so the
 //     TV app keeps playing (home-screen previews still stop);
 //   - answers the TV app's format questions as a TV would, so it offers qualities above 720p;
-//   - reports how many phones are connected to the TV app (their disconnect never reaches CastDesk over DIAL);
+//   - reports how many phones are connected to the TV app (their disconnect never reaches CastDesk over DIAL),
+//     and with "Keep playing" on, opens the video again if the TV app closes it as the last phone leaves;
 //   - gives the TV app CastDesk's name on YouTube's connection, instead of "YouTube on TV" / "Sabrina";
 //   - catches F11 and Alt+Enter (WebView2 keeps keys to itself, so CastDesk's window never sees them);
-//   - shows Back (top-left) and Fullscreen (top-right) buttons while the mouse moves.
+//   - shows Back (top-left) and Fullscreen (top-right) buttons while the mouse moves;
+//   - shows the like and dislike counts CastDesk sends (from Return YouTube Dislike) under the TV app's buttons.
 //
 //   to CastDesk:   {"type":"media","hasVideo":true,"playing":true,"title":"…","artist":"…","artwork":"https://…",
 //                   "hasNext":true,"hasPrevious":false,"watching":true,"music":false,"videoId":"dQw4w9WgXcQ",
 //                   "startedAt":1762600000000,"endsAt":1762600213000}   (Unix ms; 0 when paused or unknown)
 //                  {"type":"phones","connected":1}       phones connected to the TV app, when that changes
+//                  {"type":"reopening","videoId":"…","seconds":153}   the TV app closed the video as the last phone
+//                                                        left, and "Keep playing" opens it again (for the log)
 //                  {"type":"fullscreen"}                 toggle fullscreen (key or button)
 //                  {"type":"back"}                       the Back button: CastDesk presses Esc
 //   from CastDesk: "play" | "pause" | "togglePlay" | "nexttrack" | "previoustrack"
 //                  "fullscreen-on" | "fullscreen-off"    the window's current state, for the button's icon
+//                  {"type":"votes","videoId":"…","likes":19516050,"dislikes":522204}   counts for a video
+//                  {"type":"votes"}                      no counts (turned off, or none for this video)
 (() => {
   if (window.top !== window || !window.chrome || !window.chrome.webview) return;
 
@@ -202,11 +208,61 @@
         if (phones !== phonesConnected) {
           phonesConnected = phones;
           post({ type: 'phones', connected: phones });
+          if (phones === 0) rememberVideoAsPhonesLeave();
         }
         return;
       } catch { /* try the other form */ }
     }
   };
+
+  // ---------- Keep playing when the last phone leaves ----------
+
+  // With "Keep playing when my phone disconnects" on (window.__castDeskKeepPlaying), the video should go on
+  // after the phone leaves. A phone that cast (pairing "dial") can leave and the video goes on, but when one
+  // that reconnected through its saved link (pairing "manual") leaves, the TV app closes the video and goes to
+  // its home screen by itself, with no command from YouTube (recorded 2026-11-10). So the video and its
+  // position are noted as the last phone leaves, and if the TV app leaves the video soon after, it's opened
+  // again there. The position is kept from the last few reports, as the TV app may already be leaving the
+  // video by the time the bridge reads the lounge message.
+  let lastPlaying = null; // { id, time, rate, at }
+  const notePlaying = () => {
+    const video = currentVideo();
+    const id = isWatching() ? (videoData().video_id || videoIdFromAddress()) : '';
+    if (!id || !video || video.paused || video.ended || !isFinite(video.currentTime)) return;
+    lastPlaying = { id, time: video.currentTime, rate: video.playbackRate || 1, at: Date.now() };
+  };
+  setInterval(notePlaying, 500);
+
+  // Reopening means loading the TV app again at the video's address with its time (#/watch?v=…&t=…s): changing
+  // the address in the running app opens the video at 0:00, and its player only notes a seekTo without
+  // applying it (tested 2026-11-10). The phone has left, so nothing is lost by starting the TV app afresh.
+  let resume = null; // { id, time, rate, at }
+  const rememberVideoAsPhonesLeave = () => {
+    notePlaying();
+    if (window.__castDeskKeepPlaying !== true || !lastPlaying || Date.now() - lastPlaying.at > 2000) return;
+    resume = { ...lastPlaying };
+  };
+  const resumeIfLeft = () => {
+    if (!resume) return;
+    // Still on the video 5 seconds after the phone left: the TV app kept it, nothing to do.
+    if (Date.now() - resume.at > 5000) { resume = null; return; }
+    if (isWatching()) return;
+    const seconds = Math.max(0, Math.floor(resume.time + ((Date.now() - resume.at) / 1000) * resume.rate) - 1);
+    const id = resume.id;
+    resume = null;
+    post({ type: 'reopening', videoId: id, seconds });
+    // After a cast the address still carries the phone's launch data (its pairing code and so on): leave that
+    // out, so loading again doesn't replay the launch. Without it, only the part after # changes, so reload.
+    const address = `#/watch?v=${id}&t=${seconds}s`;
+    if (location.search) {
+      location.replace(location.origin + location.pathname + address);
+    } else {
+      location.hash = address;
+      location.reload();
+    }
+  };
+  window.addEventListener('hashchange', resumeIfLeft);
+  setInterval(resumeIfLeft, 250);
   const xhrOpen = XMLHttpRequest.prototype.open;
   const xhrSend = XMLHttpRequest.prototype.send;
   const loungeRequests = new WeakSet();
@@ -380,10 +436,110 @@
   document.addEventListener('DOMContentLoaded', attach);
   setInterval(attach, 1000);
 
+  // ---------- Like and dislike counts (Return YouTube Dislike) ----------
+
+  // The TV app's like and dislike buttons are bare icons: ytlr-like-button-renderer holds two yt-button-containers,
+  // idomkey="like-button" and "dislike-button" (their aria-labels are in the user's language). CastDesk fetches the
+  // counts from Return YouTube Dislike and sends them here; they go in small text under each button. The label sits
+  // inside the TV app's own element, so it scrolls and fades with the controls. A focused button shows its own
+  // label in the same place (the like count, or "Dislike"; recorded 2026-11-24), so that button's count is hidden.
+  let votes = null; // { videoId, likes, dislikes } from CastDesk, or null
+  const voteLabels = new Map(); // ytlr-like-button-renderer → { host, likes, dislikes }
+  // Short numbers in the TV app's own style and language (yt.config_.HL, such as en-GB): cut down, not rounded up,
+  // as YouTube writes 1,840,207,238 views as "1.8bn" and 19,516,050 likes as "19M". The browser's language can
+  // differ (en-IN would give "1.9Cr").
+  const formats = new Map();
+  const compact = (count) => {
+    let language;
+    try { language = window.yt && window.yt.config_ && window.yt.config_.HL; } catch { /* not there yet */ }
+    const key = typeof language === 'string' && language ? language : '';
+    let format = formats.get(key);
+    if (!format) {
+      try {
+        format = new Intl.NumberFormat(key || undefined, { notation: 'compact', roundingMode: 'trunc' });
+      } catch {
+        format = new Intl.NumberFormat(undefined, { notation: 'compact', roundingMode: 'trunc' });
+      }
+      formats.set(key, format);
+    }
+    return format.format(count);
+  };
+
+  const createVoteLabel = (renderer) => {
+    const host = document.createElement('castdesk-votes');
+    const shadow = host.attachShadow({ mode: 'closed' });
+    Object.assign(host.style, {
+      all: 'initial', position: 'absolute', left: '0', top: '100%', width: '100%', display: 'flex',
+      pointerEvents: 'none', marginTop: '6px',
+    });
+    const count = () => {
+      const span = document.createElement('span');
+      Object.assign(span.style, {
+        flex: '1 1 0', textAlign: 'center', whiteSpace: 'nowrap', color: 'rgba(255, 255, 255, 0.92)',
+        textShadow: '0 1px 3px rgba(0, 0, 0, 0.9)', fontWeight: '500',
+      });
+      shadow.append(span);
+      return span;
+    };
+    const label = { host, likes: count(), dislikes: count() };
+    // The label is placed against the renderer, so it needs to be the positioned box.
+    if (getComputedStyle(renderer).position === 'static') renderer.style.position = 'relative';
+    renderer.appendChild(host);
+    return label;
+  };
+
+  const updateVoteLabels = () => {
+    const id = isWatching() ? (videoData().video_id || videoIdFromAddress()) : '';
+    const show = votes && id && votes.videoId === id;
+    const renderers = show ? Array.from(document.querySelectorAll('ytlr-like-button-renderer')) : [];
+    for (const [renderer, label] of voteLabels) {
+      if (!renderers.includes(renderer) || !renderer.isConnected) {
+        label.host.remove();
+        voteLabels.delete(renderer);
+      }
+    }
+    for (const renderer of renderers) {
+      let label = voteLabels.get(renderer);
+      if (!label || !label.host.isConnected) {
+        if (label) label.host.remove();
+        label = createVoteLabel(renderer);
+        voteLabels.set(renderer, label);
+      }
+      // The TV app scales its controls with the window: keep the text in proportion to the buttons.
+      const fontFamily = getComputedStyle(renderer).fontFamily;
+      const height = renderer.getBoundingClientRect().height || 48;
+      const fontSize = `${Math.max(11, Math.round(height * 0.3))}px`;
+      const buttons = renderer.querySelectorAll('yt-button-container');
+      const likeButton = renderer.querySelector('[idomkey="like-button"]') || buttons[0];
+      const dislikeButton = renderer.querySelector('[idomkey="dislike-button"]') || buttons[1];
+      for (const [span, count, button] of [[label.likes, votes.likes, likeButton], [label.dislikes, votes.dislikes, dislikeButton]]) {
+        const text = compact(count);
+        const visibility = button && button.matches(':focus-within') ? 'hidden' : 'visible';
+        if (span.style.visibility !== visibility) span.style.visibility = visibility;
+        if (span.textContent !== text) span.textContent = text;
+        if (span.style.fontSize !== fontSize) span.style.fontSize = fontSize;
+        if (span.style.fontFamily !== fontFamily) span.style.fontFamily = fontFamily;
+      }
+    }
+  };
+  setInterval(updateVoteLabels, 500);
+  // At once when focus moves, so a count never sits under the focused button's own label.
+  document.addEventListener('focusin', updateVoteLabels, true);
+
+  const setVotes = (message) => {
+    const valid = typeof message.videoId === 'string' && Number.isFinite(message.likes) && Number.isFinite(message.dislikes);
+    votes = valid ? { videoId: message.videoId, likes: message.likes, dislikes: message.dislikes } : null;
+    updateVoteLabels();
+  };
+
   // ---------- Commands from CastDesk ----------
 
   window.chrome.webview.addEventListener('message', (event) => {
     const command = event.data;
+    if (command && typeof command === 'object') {
+      if (command.type === 'votes') setVotes(command);
+      return;
+    }
     if (command === 'fullscreen-on' || command === 'fullscreen-off') {
       setFullscreenIcon(command === 'fullscreen-on');
       return;

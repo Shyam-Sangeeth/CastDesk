@@ -16,8 +16,11 @@ internal sealed class SettingsForm : Form
 
     private readonly TextBox _nameBox = new() { Width = FieldWidth, MaxLength = CastDeskOptions.MaxFriendlyNameLength };
     private readonly CheckBox _fullscreenOnCastBox = new() { Text = "Go fullscreen when a cast starts", AutoSize = true };
-    private readonly CheckBox _hideWhenStoppedBox = new() { Text = "Hide the window when casting stops", AutoSize = true };
+    // Only used with "Keep playing" off (MainForm.StopCasting), so it sits under that box, indented.
+    private readonly CheckBox _hideWhenStoppedBox = new() { Text = "Hide the window when casting stops", AutoSize = true, Margin = new Padding(20, 3, 3, 3) };
     private readonly CheckBox _keepPlayingBox = new() { Text = "Keep playing when my phone disconnects", AutoSize = true };
+    // The link after it credits Return YouTube Dislike, as its terms ask.
+    private readonly CheckBox _showDislikesBox = new() { Text = "Show like and dislike counts from", AutoSize = true, Margin = new Padding(3, 3, 0, 3) };
     private readonly CheckBox _startWithWindowsBox = new() { Text = "Start CastDesk when I sign in to Windows", AutoSize = true };
     private readonly NumericUpDown _portBox = new() { Minimum = CastDeskOptions.MinimumPort, Maximum = CastDeskOptions.MaximumPort, Width = 100 };
     private readonly TextBox _userAgentBox = new() { Width = FieldWidth, Height = 76, Multiline = true, ScrollBars = ScrollBars.Vertical, WordWrap = true };
@@ -66,10 +69,20 @@ internal sealed class SettingsForm : Form
 
         left.Controls.Add(Heading("Window"));
         left.Controls.Add(_fullscreenOnCastBox);
-        left.Controls.Add(_hideWhenStoppedBox);
+        var dislikesRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+        var dislikesLink = new LinkLabel { Text = "Return YouTube Dislike", AutoSize = true, Margin = new Padding(0, 4, 3, 3) };
+        dislikesLink.LinkClicked += (_, _) => OpenInBrowser(Media.VoteCounts.ProjectUrl);
+        new ToolTip().SetToolTip(_showDislikesBox,
+            "Under the TV app's like and dislike buttons. Dislikes are Return YouTube Dislike's estimate; " +
+            "only each video's ID is sent to it.");
+        dislikesRow.Controls.Add(_showDislikesBox);
+        dislikesRow.Controls.Add(dislikesLink);
+        left.Controls.Add(dislikesRow);
         left.Controls.Add(_keepPlayingBox);
-        left.Controls.Add(Hint("Turn this off only if you cast from YouTube Music. In the YouTube app, tapping a new video " +
-            "disconnects the phone, so the cast would stop too."));
+        left.Controls.Add(_hideWhenStoppedBox);
+        _keepPlayingBox.CheckedChanged += (_, _) => _hideWhenStoppedBox.Enabled = !_keepPlayingBox.Checked;
+        left.Controls.Add(Hint("Turn \"Keep playing\" off only if you cast from YouTube Music. In the YouTube app, tapping a " +
+            "new video disconnects the phone, so the cast would stop too."));
 
         left.Controls.Add(Heading("Startup"));
         left.Controls.Add(_startWithWindowsBox);
@@ -131,6 +144,8 @@ internal sealed class SettingsForm : Form
         _fullscreenOnCastBox.Checked = current.FullscreenOnCast;
         _hideWhenStoppedBox.Checked = current.HideWhenCastingStops;
         _keepPlayingBox.Checked = current.KeepPlayingWhenPhoneDisconnects;
+        _showDislikesBox.Checked = current.ShowDislikes;
+        _hideWhenStoppedBox.Enabled = !current.KeepPlayingWhenPhoneDisconnects;
         _startWithWindowsBox.Checked = startsWithWindows;
         _portBox.Value = Math.Clamp(current.DialPort, CastDeskOptions.MinimumPort, CastDeskOptions.MaximumPort);
         _userAgentBox.Text = current.EffectiveUserAgent;
@@ -294,6 +309,7 @@ internal sealed class SettingsForm : Form
         result.FullscreenOnCast = _fullscreenOnCastBox.Checked;
         result.HideWhenCastingStops = _hideWhenStoppedBox.Checked;
         result.KeepPlayingWhenPhoneDisconnects = _keepPlayingBox.Checked;
+        result.ShowDislikes = _showDislikesBox.Checked;
         result.CheckForUpdates = _autoCheckUpdatesBox.Checked;
         result.ShowInDiscord = _showInDiscordBox.Checked;
         result.ShowOnLockScreen = _showOnLockScreenBox.Checked;

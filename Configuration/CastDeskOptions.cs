@@ -35,7 +35,10 @@ public sealed class CastDeskOptions
     /// <summary>Switch the window to fullscreen whenever a phone starts casting.</summary>
     public bool FullscreenOnCast { get; set; }
 
-    /// <summary>Hide the window to the tray a few seconds after the phone stops casting.</summary>
+    /// <summary>
+    /// With <see cref="KeepPlayingWhenPhoneDisconnects"/> off: when a cast that opened the window from the tray ends,
+    /// hide the window again. A window the user opened stays open, and with "Keep playing" on every window does.
+    /// </summary>
     public bool HideWhenCastingStops { get; set; } = true;
 
     /// <summary>
@@ -66,6 +69,13 @@ public sealed class CastDeskOptions
     /// half the screen's width on tinted glass; true fills the screen with it (Niranjen99's original design).
     /// </summary>
     public bool LockScreenFillsScreen { get; set; }
+
+    /// <summary>
+    /// Show like and dislike counts from Return YouTube Dislike under the TV app's like and dislike buttons. On by
+    /// default (the user's choice, 2026-11-24). Sends each open video's ID to returnyoutubedislikeapi.com, so
+    /// Settings, the README and PRIVACY.md say so.
+    /// </summary>
+    public bool ShowDislikes { get; set; } = true;
 
     /// <summary>
     /// A Chromecast with Google TV running YouTube's TV engine (Cobalt). youtube.com/tv only serves its TV
